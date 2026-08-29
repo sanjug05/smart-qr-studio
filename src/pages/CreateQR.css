@@ -1,0 +1,24 @@
+.create-qr-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 24px;
+  align-items: start;
+}
+
+.create-qr-form {
+  padding: 24px;
+}
+
+.create-qr-nav {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+@media (max-width: 900px) {
+  .create-qr-layout {
+    grid-template-columns: 1fr;
+  }
+}

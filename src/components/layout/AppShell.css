@@ -1,0 +1,115 @@
+.shell {
+  min-height: 100%;
+  display: flex;
+}
+
+.shell-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  padding: 24px 16px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.shell-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.05rem;
+  padding: 0 8px 24px;
+}
+
+.shell-logo-mark {
+  color: var(--color-accent);
+  font-size: 1.3rem;
+}
+
+.shell-nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shell-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--color-ink-muted);
+  font-weight: 600;
+  font-size: 0.92rem;
+  min-height: var(--touch-target);
+}
+
+.shell-nav-link:hover {
+  background: #f0f0f3;
+  color: var(--color-ink);
+}
+
+.shell-nav-link.active {
+  background: var(--color-ink);
+  color: #fff;
+}
+
+.shell-main {
+  flex: 1;
+  min-width: 0;
+  padding: 32px clamp(16px, 4vw, 48px) 96px;
+}
+
+.shell-tabbar {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .shell-sidebar {
+    display: none;
+  }
+
+  .shell-main {
+    padding: 20px 16px 88px;
+  }
+
+  .shell-tabbar {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    z-index: 20;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .shell-tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 56px;
+    text-decoration: none;
+    color: var(--color-ink-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+
+  .shell-tab span:first-child {
+    font-size: 1.15rem;
+  }
+
+  .shell-tab.active {
+    color: var(--color-accent);
+  }
+}

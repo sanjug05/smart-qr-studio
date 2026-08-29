@@ -1,0 +1,50 @@
+.qr-preview-panel {
+  padding: 20px;
+  position: sticky;
+  top: 24px;
+  align-self: start;
+}
+
+.qr-preview-canvas-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  background: repeating-conic-gradient(#f0f0f3 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.qr-preview-canvas svg,
+.qr-preview-canvas canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+.qr-preview-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-ink-muted);
+  font-size: 0.85rem;
+}
+
+.qr-preview-status {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.qr-preview-message {
+  font-size: 0.82rem;
+  color: #92620c;
+  background: #fdf3e2;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin: 0 0 12px;
+}

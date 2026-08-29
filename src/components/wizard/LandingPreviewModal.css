@@ -1,0 +1,37 @@
+.landing-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 23, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 24px;
+}
+
+.landing-modal-phone {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  height: min(760px, 85vh);
+  background: #fff;
+  border-radius: 32px;
+  border: 8px solid #141417;
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+.landing-modal-screen {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.landing-modal-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  min-height: 36px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.9);
+}
