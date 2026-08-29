@@ -1,8 +1,8 @@
-import type { QRProject } from '@/types/project'
+import type { LandingContent } from '@/types/project'
 import { normalizeUrl, validateUrl } from '@/lib/validation'
 import './LandingView.css'
 
-export default function LandingView({ project }: { project: QRProject }) {
+export default function LandingView({ project }: { project: LandingContent }) {
   const { brand } = project
   const destinations = [...project.destinations]
     .filter((d) => d.enabled && validateUrl(d.url).valid)

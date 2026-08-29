@@ -1,15 +1,15 @@
 import { Link } from 'react-router-dom'
 import type { QRProject } from '@/types/project'
-import { getLandingUrl } from '@/services/qr/landingUrl'
+import { getShareUrl } from '@/services/share/shareLinkService'
 import { copyToClipboard } from '@/services/qr/qrExport'
 
 export default function ProjectCard({ project, onDelete, onChanged }: { project: QRProject; onDelete: () => void; onChanged: () => void }) {
-  const landingUrl = getLandingUrl(project)
+  const shareUrl = getShareUrl(project)
   const enabledCount = project.destinations.filter((d) => d.enabled).length
 
   const handleCopy = async () => {
-    const ok = await copyToClipboard(landingUrl)
-    if (!ok) window.prompt('Copy this link:', landingUrl)
+    const ok = await copyToClipboard(shareUrl)
+    if (!ok) window.prompt('Copy this link:', shareUrl)
   }
 
   const handleDelete = () => {

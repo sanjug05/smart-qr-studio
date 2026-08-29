@@ -1,7 +1,7 @@
 import QRCodeStyling, { type Options as QRCodeStylingOptions } from 'qr-code-styling'
 import type { QRProject } from '@/types/project'
 import { resolveBranding, moduleStyleToCornerDotType, moduleStyleToCornerSquareType, moduleStyleToDotType, type EffectiveBranding } from './branding'
-import { getLandingUrl } from './landingUrl'
+import { getShareUrl } from '@/services/share/shareLinkService'
 
 export interface BuildQrResult {
   instance: QRCodeStyling
@@ -15,9 +15,15 @@ export interface BuildQrResult {
  * that makes any center branding tolerable at all. `brandingOverride`
  * lets the validation/fallback loop (see qrValidation.ts) retry with a
  * smaller branding footprint without re-deriving it from scratch.
+ *
+ * `data` is the self-contained share URL (see shareLinkService.ts), not a
+ * short slug — the QR must resolve on a device that has never talked to
+ * this browser's localStorage. That makes `data` meaningfully longer than
+ * a plain link, which is exactly why the scan-reliability verification in
+ * generateVerifiedQr.ts matters more here than it would for a short URL.
  */
 export function buildQr(project: QRProject, brandingOverride?: EffectiveBranding): BuildQrResult {
-  const data = getLandingUrl(project)
+  const data = getShareUrl(project)
   const { qrStyle, brand } = project
 
   const branding =

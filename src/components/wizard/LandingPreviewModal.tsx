@@ -1,9 +1,18 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import type { QRProject } from '@/types/project'
 import LandingView from '@/features/landing/LandingView'
+import { buildShareablePayload, payloadToLandingContent } from '@/services/share/sharePayload'
 import './LandingPreviewModal.css'
 
 export default function LandingPreviewModal({ project, onClose }: { project: QRProject; onClose: () => void }) {
+  // Renders exactly what a real scan will show, not the raw in-progress
+  // project — the two can differ (an uploaded logo, a disabled or 6th
+  // destination) because the shareable QR payload deliberately excludes
+  // anything that isn't in the self-contained link. Showing the raw
+  // project here would silently promise a logo the customer will never
+  // see. See src/services/share/sharePayload.ts.
+  const content = useMemo(() => payloadToLandingContent(buildShareablePayload(project)), [project])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -29,7 +38,7 @@ export default function LandingPreviewModal({ project, onClose }: { project: QRP
           ✕
         </button>
         <div className="landing-modal-screen">
-          <LandingView project={project} />
+          <LandingView project={content} />
         </div>
       </div>
     </div>

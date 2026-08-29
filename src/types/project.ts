@@ -118,3 +118,17 @@ export function createNewProject(): QRProject {
 export function generateSlug(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 8)
 }
+
+/**
+ * Everything the customer landing page actually reads to render itself —
+ * nothing more. A full `QRProject` satisfies this structurally (it has all
+ * these fields and then some), and so does content reconstructed from a
+ * decoded share payload (see src/services/share/sharePayload.ts), which
+ * has no `id`/`slug`/`qrStyle`/timestamps at all. Keeping the landing view
+ * scoped to this shape is what lets both sources render through the same
+ * component with no adapter object pretending to be a full project.
+ */
+export interface LandingContent {
+  brand: Pick<BrandConfig, 'companyName' | 'tagline' | 'logoDataUrl' | 'primaryColor' | 'secondaryColor' | 'backgroundColor'>
+  destinations: Array<Pick<Destination, 'id' | 'label' | 'url' | 'description' | 'icon' | 'customIconDataUrl' | 'enabled' | 'order'>>
+}

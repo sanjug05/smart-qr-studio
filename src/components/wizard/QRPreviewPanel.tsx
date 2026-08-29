@@ -6,7 +6,7 @@ import LandingPreviewModal from './LandingPreviewModal'
 import './QRPreviewPanel.css'
 
 export default function QRPreviewPanel({ project, showDownloads }: { project: QRProject; showDownloads: boolean }) {
-  const { containerRef, instance, verified, fallbackApplied, message, loading, landingUrl } = useVerifiedQr(project)
+  const { containerRef, instance, verified, fallbackApplied, message, loading, shareUrl } = useVerifiedQr(project)
   const [showLandingPreview, setShowLandingPreview] = useState(false)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
 
@@ -35,14 +35,17 @@ export default function QRPreviewPanel({ project, showDownloads }: { project: QR
       {message ? <p className="qr-preview-message">{message}</p> : null}
 
       <div className="field" style={{ marginTop: 12 }}>
-        <label htmlFor="landing-url">Smart QR landing link</label>
+        <label htmlFor="landing-url">Smart QR share link</label>
         <div style={{ display: 'flex', gap: 8 }}>
-          <input id="landing-url" className="input" readOnly value={landingUrl} />
-          <button className="btn btn-secondary" onClick={() => handleCopy('Landing link', landingUrl)}>
+          <input id="landing-url" className="input" readOnly value={shareUrl} />
+          <button className="btn btn-secondary" disabled={!shareUrl} onClick={() => handleCopy('Share link', shareUrl)}>
             Copy
           </button>
         </div>
-        <span className="hint">This is what the QR encodes — not your destination URLs directly.</span>
+        <span className="hint">
+          This is exactly what the QR encodes — a self-contained link that works on any device, with no dependency on
+          this browser.
+        </span>
       </div>
 
       <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 8 }} onClick={() => setShowLandingPreview(true)}>
@@ -69,12 +72,14 @@ export default function QRPreviewPanel({ project, showDownloads }: { project: QR
               Download SVG
             </button>
           </div>
-          <a className="btn btn-secondary" href={landingUrl} target="_blank" rel="noopener noreferrer">
-            Open QR link (test)
-          </a>
+          {shareUrl ? (
+            <a className="btn btn-secondary" href={shareUrl} target="_blank" rel="noopener noreferrer">
+              Open QR link (test)
+            </a>
+          ) : null}
           <p className="hint">
             PNG/SVG image files don't carry click-through metadata on their own — when placing the QR in a PDF, slide
-            deck, or webpage, hyperlink the image to the copied landing link above so it's clickable there too.
+            deck, or webpage, hyperlink the image to the copied share link above so it's clickable there too.
           </p>
         </div>
       ) : null}

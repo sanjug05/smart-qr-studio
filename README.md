@@ -1,15 +1,15 @@
 # Smart QR Studio
 
-Create a branded QR code that opens up to **five** destinations from a single scan — website, location, brochure, virtual tour, and one more you define. The QR never encodes those destination URLs directly; it points at a **smart landing page** that you can keep editing after the code is printed.
+Create a branded QR code that opens up to **five** destinations from a single scan — website, location, brochure, virtual tour, and one more you define. The QR is **self-contained**: it encodes everything the customer landing page needs directly in its own URL, so it works on any device that scans it — no account, no app install, no dependency on the creator's browser.
 
 Smart QR Studio itself is not branded to any company. **AIS** is only a sample brand used to demonstrate the product — every piece of branding (name, logo, colors, destination labels) is user-configurable, for any company.
 
-> **Live limitation, stated up front:** V1 has no backend. Every project is stored in the creator's browser (`localStorage`) only. A QR generated on one device/browser will only resolve on that same browser until a backend is added — see [Future dynamic QR capability](#future-dynamic-qr-capability). This is called out in the app itself (Dashboard, My QR Codes, Settings).
+> **Live limitation, stated up front:** V1 has no backend. The QR/share link itself is fully self-contained and works cross-device (see [Self-contained shareable QR](#self-contained-shareable-qr-cross-device) below) — that was fixed after real-world testing found it broken. What's still local-only is the *creator's* convenience: "My QR Codes," editing, and the export/import backup all live in this browser's `localStorage` only. And because everything a scan needs is baked into the QR at generation time, **editing a project after printing its QR does not update that already-printed code** — see the [known limitation](#known-limitations-summary) on this. Both are inherent to a no-backend V1 and are called out in the app itself.
 
 ## Features
 
 - **One scan, up to 5 destinations** — Website, Location, Brochure, Virtual Tour, and a fully custom fifth slot. Every label, URL, icon, and description is editable; destinations can be reordered by drag-and-drop and toggled on/off.
-- **Smart-link architecture** — the QR encodes `https://your-domain/#/q/<slug>`, never the destination URLs. See [QR indirection](#qr-indirection--why-a-smart-link).
+- **Self-contained shareable QR** — the QR encodes a compact, versioned payload of the brand and destinations directly in its own URL (`https://your-domain/#/q/p.<encoded-payload>`), so it resolves on any device with zero dependency on the creator's browser. See [Self-contained shareable QR](#self-contained-shareable-qr-cross-device).
 - **Branded QR generation** — square/rounded/dot module styles, custom foreground/background/transparent, adjustable size and quiet zone, PNG and SVG export, live preview.
 - **Company identity inside the QR** — None / Logo / Company initials / Company name / Custom, rendered as a safe centered image with high error correction. Automatically falls back to initials (or drops branding) if a decode check fails. See [How QR branding works](#how-qr-branding-works).
 - **Internal scan validation** — every generated QR is decoded by an independent decoder (jsQR) before being called "verified," with a visible badge and automatic fallback if verification fails.
@@ -36,6 +36,7 @@ src/
   lib/             Pure helpers: URL/image validation, file reading
   services/
     qr/            QR generation, company-identity branding, scan validation, export
+    share/         Self-contained payload encode/decode + ShareLinkService abstraction
     storage/       ProjectRepository abstraction (localStorage today, backend-ready)
   hooks/           useProjectDraft (wizard state + autosave), useVerifiedQr, useProjects
   features/landing/  The actual customer-facing landing page component
@@ -48,15 +49,54 @@ src/
 
 Business logic (QR generation, branding, validation, storage) is fully decoupled from UI components — every service under `src/services` is a plain TypeScript module with no React or DOM-framework dependency beyond the Canvas/Blob APIs it needs, so it can be reused unchanged inside a Capacitor WebView.
 
-## QR indirection — why a "smart link"
+## Self-contained shareable QR (cross-device)
 
-The QR code encodes **only** a landing-page URL:
+**This is the architecture that makes the product actually work as a QR code** — a QR generated on a desktop must resolve correctly when scanned on a phone that has never talked to that desktop's browser. V1 has no backend, so the only place that data can live is inside the QR's own URL.
 
 ```
-QR code  →  https://your-domain/#/q/abc123  →  branded landing page  →  destination buttons  →  chosen URL opens
+Creator builds project → build a minimal ShareableQRPayload → base64url-encode it
+  → QR encodes https://your-domain/#/q/p.<encoded-payload>
+  → scanned on ANY device → payload decoded client-side → landing page renders
 ```
 
-Destinations are *not* baked into the QR. This means a printed/laminated QR code keeps working even after you change what it points to — see [Future dynamic QR capability](#future-dynamic-qr-capability) for what's needed to make that fully real (a backend), versus what V1 actually does (same-browser local storage).
+No `localStorage.getBySlug()` lookup is involved in that path at all. This was a real bug found in first-round real-device testing: an earlier version encoded only a short local slug, which resolved fine in the browser that created it and showed "QR code not found" on every other device — the opposite of a working product.
+
+### The payload (`src/services/share/sharePayload.ts`)
+
+`ShareableQRPayload` is deliberately minimal and uses short field names — every byte here is a byte the QR has to physically encode, and QR data capacity is a real constraint on scan reliability (see below):
+
+```ts
+interface ShareableQRPayload {
+  v: 1                          // schema version
+  n: string                     // company name
+  t?: string                    // tagline
+  p: string; s: string; bg: string  // primary / secondary / background color
+  d: { l: string; u: string; i: string; de?: string }[]  // label, url, icon, description
+}
+```
+
+`buildShareablePayload(project)` includes only enabled destinations with a valid http/https URL, capped at 5, in display order — disabled destinations and anything beyond the fifth would never be shown, so they're not worth the bytes. `encodeSharePayload`/`decodeSharePayload` handle base64url (URL-safe, no padding) encoding of the UTF-8 JSON. **No `eval`, no `Function()`, no arbitrary code execution anywhere in this path.**
+
+### Validation is not optional here
+
+`decodeSharePayload` treats its input as fully untrusted — it's data from a URL a stranger's camera app just opened. Decoding failures, JSON that doesn't parse, an unrecognized `v`, a missing company name, and destination URLs that don't pass the same http/https allowlist the builder uses are all rejected; a payload where every destination gets filtered out this way is treated as invalid rather than silently rendering an empty landing page. The result is one of: a rendered landing page, or a clean **"Invalid QR code"** screen — never an uncaught error.
+
+### What's deliberately excluded, and why
+
+- **Uploaded logos and custom destination icons are never embedded.** They're base64 image data that can run tens of KB — encoding one into the QR itself would either blow past QR capacity or force a much denser, harder-to-scan code. V1 has no image hosting to reference a URL instead, so branding on a *shared* QR falls back to the existing initials-avatar (the same fallback already used when no logo is set). The **builder's own "Preview customer page"** shows this same fallback, not the uploaded logo, specifically so the creator isn't shown a preview that overpromises what a real scan will look like.
+- **QR *visual* styling (module shape, colors, branding style) is not part of the payload.** That's how the QR looks, not what the landing page needs to render — keeping it out of the payload keeps the payload smaller with no loss of function.
+
+### Backward compatibility
+
+QR codes generated before this feature existed used a short plain slug (`#/q/abc123`), resolved via `localStorage.getBySlug()` — and only ever worked in the creator's own browser. Both formats are still recognized: a `p.`-prefixed token decodes directly (`.` never appears in base64url output, so there's no ambiguity to guess at); anything else is treated as a legacy slug and looked up in local storage, with the existing "QR code not found" explanation if it isn't there. Old codes aren't broken by this change; they just don't gain the cross-device property new ones have.
+
+### Payload size and scan reliability
+
+A realistic 5-destination project (company name, tagline, 5 labels/URLs/descriptions) encodes to roughly **700–750 characters** of URL — measured directly, not estimated (see Testing below). That's meaningfully more data than a short slug, which pushes the QR to a higher version (more, smaller modules). The existing scan-reliability pipeline (`generateVerifiedQr.ts`) already re-verifies every generated code via an independent decode and automatically shrinks or drops branding if verification fails; it now also distinguishes *why* a QR failed — "too much data" gets its own message rather than being blamed on branding that may never have been the problem. In testing, realistic payloads with full initials-branding still verify as scannable; there is no artificial compression step, on the principle of not adding complexity that measured testing didn't show a need for.
+
+### Future migration off self-contained links
+
+`src/services/share/shareLinkService.ts` is the one seam every "what URL does this QR encode" call site goes through (`getShareUrl(project)`) — QR generation, "Copy QR link," PNG/SVG export, and the project list's "Copy link" all call it, none of them construct a URL themselves. V1's implementation encodes everything into the URL; a V2 backend would instead POST the project and get back a short ID-based URL — which is also what would finally make "edit destinations after printing" retroactive (see the known limitation below). Only `shareLinkService.ts` would change.
 
 ## How QR branding works
 
@@ -149,17 +189,17 @@ Three things worth doing at that point (not needed for the web build):
 
 ## Future dynamic QR capability
 
-The architecture is built around this flow becoming fully real once a backend exists:
+The eventual target, once a backend exists:
 
 ```
-User creates QR → QR gets a unique slug → QR points at a permanent smart URL
+User creates QR → QR gets a permanent ID → QR points at a server-backed URL
   → user edits destinations later → printed QR is unchanged
-  → customer automatically sees the updated destinations
+  → customer automatically sees the updated destinations, from any device
 ```
 
-**Today**, this already works *within one browser* — edit a project in "My QR Codes" and its `/#/q/:slug` landing page reflects the change immediately, because the same `localStorage` is read at scan time.
+**Today, cross-device scanning already works** — that's the whole point of the self-contained payload architecture above. What V1 *cannot* do is make an already-printed QR retroactive: since the payload is baked into the code at generation time, editing a project afterward only affects *new* QR codes generated from it, not ones already scanned into someone's camera roll or already printed. That's the one piece a backend would add, not cross-device resolution itself (already solved).
 
-**What's missing for true cross-device dynamic QR:** a backend implementing the same `ProjectRepository` interface (`src/services/storage/projectRepository.ts`) over HTTP instead of `localStorage`. No UI, QR-generation, or routing code would need to change — that's the point of the abstraction.
+**What's needed for that last piece:** a backend implementing the same `ProjectRepository` interface (`src/services/storage/projectRepository.ts`) over HTTP instead of `localStorage`, and `shareLinkService.ts`'s `getShareUrl()` swapped to return a short server-backed URL instead of an encoded payload. No other UI, QR-generation, or routing code would need to change — that's the point of both abstractions.
 
 ## Future analytics (not implemented)
 
@@ -209,6 +249,14 @@ This is what was actually run and observed, not assumed:
 - Disabling a destination in the builder and reloading a separate tab on that project's landing page — the disabled destination is hidden and destination order/custom labels are preserved.
 - A destination URL saved without a scheme (e.g. `example.com`) is normalized before being used as an `href`, so it resolves as an absolute external link rather than a broken relative path against the hash-routed page (found and fixed during this audit).
 
+**Self-contained QR / cross-device resolution** — this is the critical property, so it got the most scrutiny:
+- Generated a 5-destination project's share link, opened it in a **separate browser tab, then ran `localStorage.clear()` in that tab and reloaded from scratch** — the landing page still rendered correctly (company name, tagline, all 5 destinations, correct order, correct colors, correct absolute destination URLs). This proves the decode path has no localStorage dependency; it does not substitute for scanning with a real second physical device (see "Not verified" below).
+- Downloaded the actual PNG the builder produces, decoded it independently with a **separate copy of jsQR loaded from a different source** than the app's own bundled copy, and confirmed the decoded text matches the exact 739-character share URL character-for-character.
+- Ran a payload-validation matrix through the real route: valid payload, empty company name, zero destinations, unknown schema version (`v:2`), a destination with a `javascript:` URL, invalid JSON, invalid base64, and a truncated token — every malformed case produced the clean "Invalid QR code" screen with zero console errors; the valid one rendered normally.
+- A payload with one safe destination and two `javascript:`/`data:` destinations mixed in rendered only the safe one — confirms per-destination filtering, not just all-or-nothing rejection, and confirms unsafe URLs surviving decode is not possible.
+- A legacy plain-slug QR (the pre-fix format) still resolves via the old localStorage lookup when present, and still shows the (now more accurately worded) "QR code not found" explanation when it isn't — confirming the fix didn't regress backward compatibility.
+- Measured real payload/URL size for the AIS sample project (5 destinations, tagline, descriptions): **739 characters total**. The resulting QR is visibly denser than the old slug-based one but still passed the internal verified-scannable check with initials branding active.
+
 **Storage & error handling**
 - Manually corrupted `localStorage` (invalid JSON) and reloaded — app recovers to an empty state with no console errors and no crash.
 - Verified that visiting `/create` without making any change does not persist a blank project (no junk entries in "My QR Codes").
@@ -223,7 +271,7 @@ This is what was actually run and observed, not assumed:
 - Checked for horizontal scrolling and layout breakage at 1440px, 1280px, 768px, 390px, and 375px viewport widths across the dashboard, the builder wizard (all 4 steps), and the landing page. Sidebar nav collapses to a bottom tab bar at the documented breakpoint; the QR preview panel and download buttons remain fully usable and un-clipped at the narrowest width tested.
 - `jsx-a11y` lint rules surfaced and fixed real issues: two form-control groups (module style, branding style) were using bare `<label>` text not associated with any control — restructured as `<fieldset>`/`<legend>`; a radio input's accessible name relied on ambiguous nested markup — given an explicit `aria-label`; a modal backdrop's click-to-dismiss handler was on a non-interactive element with no keyboard equivalent — restructured so the dialog role sits on the actual dialog panel and the backdrop's click-outside-to-close is documented as a pointer-only convenience backed by an existing Escape-key handler and visible close button.
 
-**Not verified** (no access to physical devices in this environment): scanning a **printed** QR with a real phone camera under varied lighting, and real-device Safari/iOS rendering. The internal jsQR validation and the PNG/SVG byte-level checks above are real but partial substitutes — they prove the exported files are well-formed and decodable by a standards-compliant reader, not that every camera will read them comfortably at every print size and lighting condition.
+**Not verified** (no access to physical devices in this environment): scanning a **printed** QR, or any QR, with an **actual phone camera** — including an iPhone — has not been done. The "cross-device" testing above proves the architecture has no localStorage dependency (a separate browser context with storage explicitly cleared resolves the link correctly) and that the exact bytes of the downloaded PNG independently decode to the right URL via a decoder separate from the app's own — that is real, meaningful evidence the fix works, but it is not the same as a physical camera scan under real lighting, at real print size, from a real distance. If you test this with an actual phone and it doesn't work, that's a gap this testing could not catch.
 
 ## Sample brand configuration
 
@@ -233,18 +281,20 @@ Click **"Try a sample (AIS)"** on the Dashboard to load a fully filled-out examp
 
 Scattered through the sections above; collected here for a quick scan:
 
-- **No backend, no cross-device sync.** Every project lives in one browser's `localStorage`. Moving devices, clearing site data, or using a different browser means the project — and any QR codes pointing at it — stop resolving. Export/import (Settings) is the only current way to move data between browsers, and it's manual.
+- **Editing a project after generating its QR does not update already-generated codes.** The payload is baked in at generation time (see [Self-contained shareable QR](#self-contained-shareable-qr-cross-device)) — a printed/shared QR is a snapshot. Generate a new QR after making changes if you need the update reflected.
+- **The *creator's* "My QR Codes" is still local-only** — every project lives in one browser's `localStorage` for editing purposes. Moving devices, clearing site data, or using a different browser means the creator loses editing access to past projects (already-generated QR codes are unaffected — they're self-contained). Export/import (Settings) is the only current way to move that editing data between browsers, and it's manual.
+- **No logo or custom destination icons on a shared/scanned QR** — deliberately excluded from the payload to keep the QR scannable (see above); the initials-avatar fallback is used instead. The builder's own logo upload still works for in-app preview.
 - **QR branding fits are verified, not guaranteed under all real-world conditions.** The internal jsQR check proves the exported bitmap is decodable by a standards-compliant reader; it can't account for print quality, camera hardware, lighting, or scan distance.
 - **Initials for non-Latin, non-space-delimited names are a plain truncation**, not a linguistically meaningful abbreviation (see the QR branding section above).
 - **No analytics, no scan tracking, no accounts** — by design for V1, not an oversight. The data model (stable slugs and destination IDs) is ready for it later.
-- **Not tested on a real mobile device or in a native WebView.** All testing in this README was done in a desktop browser with emulated viewports/user agents; Capacitor packaging has not been performed (see the Android/iOS section above).
+- **Not tested on a real mobile device or in a native WebView.** All testing in this README was done in a desktop browser with emulated viewports/user agents and cross-device resolution verified by clearing `localStorage` in a second browser tab (see Testing below) rather than an actual second physical device; Capacitor packaging has not been performed (see the Android/iOS section above).
 - **Three dev/transitive-dependency `npm audit` advisories are open**, judged non-blocking for the reasons given in "Dependency audit" above, not silently ignored.
 
 ## Future roadmap
 
 Roughly in order of what would unlock the most value next, per the architecture decisions already in place:
 
-1. **Backend-backed `ProjectRepository`** — the single highest-leverage change; makes cross-device dynamic QR real (see "Future dynamic QR capability") and is the prerequisite for accounts, sharing, and analytics.
+1. **Backend-backed `ProjectRepository` + `ShareLinkService`** — cross-device *scanning* already works (self-contained payload); a backend would add retroactive editing of already-generated QR codes, cross-device *management* of the creator's own project list, and is the prerequisite for accounts, sharing, and analytics.
 2. **Scan/click analytics** — once a backend exists, log against the existing stable `slug`/`destination.id` keys; surface counts on a Dashboard the "lightweight" version already has a placeholder shape for.
 3. **Native packaging** — `npx cap add android/ios`, swap `localStorage` for `@capacitor/preferences`, and a real-device test pass (see the Capacitor section above for exactly what's already in place vs. what remains).
 4. **PDF export** — deliberately not attempted in V1 per the original scope ("do not implement PDF unless it can be done properly"); revisit once there's a concrete print/layout use case to design against.
