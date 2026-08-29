@@ -46,8 +46,8 @@ export default function StyleStep({
     <div>
       <h2 style={{ marginTop: 0 }}>QR Style</h2>
 
-      <div className="field">
-        <label>Module style</label>
+      <fieldset className="field" style={{ border: 0, padding: 0, margin: '0 0 16px' }}>
+        <legend style={{ fontSize: '0.85rem', fontWeight: 600, padding: 0, marginBottom: 6 }}>Module style</legend>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {MODULE_STYLES.map((opt) => (
             <button
@@ -61,7 +61,7 @@ export default function StyleStep({
             </button>
           ))}
         </div>
-      </div>
+      </fieldset>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
         <RangeField id="qr-size" label={`Size (${qrStyle.size}px)`} min={240} max={1024} step={8} value={qrStyle.size} onChange={(v) => onChange({ size: v })} />
@@ -84,27 +84,38 @@ export default function StyleStep({
         by reshaping the code's own data modules. Scan reliability is verified automatically after generation.
       </p>
 
-      <div className="field">
-        <label>Branding style</label>
+      <fieldset className="field" style={{ border: 0, padding: 0, margin: '0 0 16px' }}>
+        <legend style={{ fontSize: '0.85rem', fontWeight: 600, padding: 0, marginBottom: 6 }}>Branding style</legend>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {BRANDING_STYLES.map((opt) => (
-            <label key={opt.value} className="card" style={{ display: 'flex', gap: 12, padding: 12, alignItems: 'flex-start', cursor: 'pointer' }}>
-              <input type="radio" name="branding-style" checked={qrStyle.brandingStyle === opt.value} onChange={() => onChange({ brandingStyle: opt.value })} style={{ marginTop: 4 }} />
-              <span>
-                <span style={{ fontWeight: 700, display: 'block' }}>{opt.label}</span>
-                <span className="hint">{opt.hint}</span>
-              </span>
-            </label>
-          ))}
+          {BRANDING_STYLES.map((opt) => {
+            const inputId = `branding-style-${opt.value}`
+            return (
+              <label key={opt.value} htmlFor={inputId} className="card" style={{ display: 'flex', gap: 12, padding: 12, alignItems: 'flex-start', cursor: 'pointer' }}>
+                <input
+                  id={inputId}
+                  type="radio"
+                  name="branding-style"
+                  aria-label={opt.label}
+                  checked={qrStyle.brandingStyle === opt.value}
+                  onChange={() => onChange({ brandingStyle: opt.value })}
+                  style={{ marginTop: 4 }}
+                />
+                <span>
+                  <span style={{ fontWeight: 700, display: 'block' }}>{opt.label}</span>
+                  <span className="hint">{opt.hint}</span>
+                </span>
+              </label>
+            )
+          })}
         </div>
-      </div>
+      </fieldset>
 
       {qrStyle.brandingStyle === 'logo' || qrStyle.brandingStyle === 'custom' ? (
         <div className="field">
           <label htmlFor="branding-logo">Branding image</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {qrStyle.brandingLogoDataUrl ? (
-              <img src={qrStyle.brandingLogoDataUrl} alt="Branding image preview" style={{ width: 40, height: 40, objectFit: 'contain', borderRadius: 8, border: '1px solid var(--color-border)' }} />
+              <img src={qrStyle.brandingLogoDataUrl} alt="Current branding upload" style={{ width: 40, height: 40, objectFit: 'contain', borderRadius: 8, border: '1px solid var(--color-border)' }} />
             ) : null}
             <label className="btn btn-secondary" htmlFor="branding-logo" style={{ cursor: 'pointer' }}>
               Upload image

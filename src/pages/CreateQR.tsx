@@ -12,7 +12,7 @@ import './CreateQR.css'
 export default function CreateQR() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { project, ready, updateBrand, updateDestinations, updateQrStyle } = useProjectDraft(id)
+  const { project, ready, saveError, updateBrand, updateDestinations, updateQrStyle } = useProjectDraft(id)
   const [step, setStep] = useState(1)
 
   // react-router keeps this component instance mounted across /create <->
@@ -41,6 +41,12 @@ export default function CreateQR() {
       </div>
 
       <StepIndicator step={step} />
+
+      {saveError ? (
+        <p className="error card" role="alert" style={{ padding: 12, marginBottom: 16 }}>
+          {saveError}
+        </p>
+      ) : null}
 
       <div className="create-qr-layout">
         <div className="card create-qr-form">

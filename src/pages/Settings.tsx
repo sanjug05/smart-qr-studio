@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react'
-import { projectRepository } from '@/services/storage/projectRepository'
-import type { QRProject } from '@/types/project'
+import { projectRepository, isValidProject } from '@/services/storage/projectRepository'
 
 export default function Settings() {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -25,14 +24,27 @@ export default function Settings() {
     if (!file) return
     try {
       const text = await file.text()
-      const parsed = JSON.parse(text) as QRProject[]
+      const parsed: unknown = JSON.parse(text)
       if (!Array.isArray(parsed)) throw new Error('Invalid file')
-      for (const project of parsed) {
+
+      // Don't trust the file just because it parsed as JSON — a hand-edited
+      // or foreign JSON file can parse fine while its entries don't match
+      // QRProject at all. Validate each one before it ever reaches storage.
+      const valid = parsed.filter(isValidProject)
+      const skipped = parsed.length - valid.length
+      for (const project of valid) {
         await projectRepository.save(project)
       }
-      setMessage(`Imported ${parsed.length} project(s). Refresh Dashboard / My QR Codes to see them.`)
-    } catch {
-      setMessage('Could not import this file — it does not look like a Smart QR Studio backup.')
+
+      if (valid.length === 0) {
+        setMessage('Could not import this file — no entries matched the Smart QR Studio project format.')
+      } else {
+        setMessage(
+          `Imported ${valid.length} project(s)${skipped > 0 ? ` (skipped ${skipped} entr${skipped === 1 ? 'y' : 'ies'} that didn't match the expected format)` : ''}. Refresh Dashboard / My QR Codes to see them.`
+        )
+      }
+    } catch (err) {
+      setMessage(err instanceof Error && err.message.includes('full') ? err.message : 'Could not import this file — it does not look like a Smart QR Studio backup.')
     }
   }
 

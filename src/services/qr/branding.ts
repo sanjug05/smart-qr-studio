@@ -27,10 +27,40 @@ export interface EffectiveBranding {
   note?: string
 }
 
-const MAX_NAME_LENGTH_FOR_FULL_TEXT = 10
 const MAX_INITIALS_IMAGE_SIZE = 0.2
 const MAX_NAME_IMAGE_SIZE = 0.26
 const MAX_LOGO_IMAGE_SIZE = 0.28
+
+// The branding canvas is CANVAS_SIZE px square (see renderTextToImage); this
+// is the smallest font size still treated as legibly printable once shrunk
+// to fit. MIN_LEGIBLE_FONT_SIZE / CANVAS_SIZE ≈ 12% of the branding plate's
+// height, which is roughly what renderTextToImage's own shrink loop floors
+// out at for initials-length strings today.
+const CANVAS_SIZE = 240
+const MIN_LEGIBLE_FONT_SIZE = 28
+const CANVAS_FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", sans-serif'
+
+/**
+ * Does `text` fit inside the branding plate at a still-legible size?
+ *
+ * A character *count* is a poor proxy for this: "Global Industrial" (18
+ * Latin characters, narrow glyphs) can be narrower on screen than a
+ * 6-character string set in a wide script, and CJK/other wide-glyph text
+ * in particular is undercounted by length alone — an 8-character Japanese
+ * company name can be visually denser than a 10-character Latin one. This
+ * measures actual rendered glyph width via Canvas2D's `measureText`
+ * against the same font stack `renderTextToImage` will really draw with,
+ * which is the technically reliable signal a character-count threshold
+ * can only approximate.
+ */
+function fitsBrandingPlate(text: string): boolean {
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return text.length <= 10 // no canvas support to measure with — fall back to the old heuristic
+  ctx.font = `700 ${MIN_LEGIBLE_FONT_SIZE}px ${CANVAS_FONT_FAMILY}`
+  const maxWidth = CANVAS_SIZE - 8 * 4 // matches renderTextToImage's padding math
+  return ctx.measureText(text).width <= maxWidth
+}
 
 export function resolveBranding(
   style: BrandingStyle,
@@ -60,7 +90,7 @@ export function resolveBranding(
 
     case 'name': {
       if (!name) return { imageSize: 0, note: 'Enter a company name to brand the QR.' }
-      if (name.length > MAX_NAME_LENGTH_FOR_FULL_TEXT) {
+      if (!fitsBrandingPlate(name)) {
         // The full name would need a branding area too large to stay
         // reliably scannable — fall back to initials automatically rather
         // than shipping an attractive-but-unreadable QR.
@@ -81,7 +111,7 @@ export function resolveBranding(
       if (logoDataUrl) return { image: logoDataUrl, imageSize: MAX_LOGO_IMAGE_SIZE }
       const text = sanitizeCompanyName(customText || name)
       if (!text) return { imageSize: 0, note: 'Upload a custom image or enter text to brand the QR.' }
-      const useInitials = text.length > MAX_NAME_LENGTH_FOR_FULL_TEXT
+      const useInitials = !fitsBrandingPlate(text)
       const label = useInitials ? companyInitials(text) : text
       return {
         image: renderTextToImage(label, foregroundColor),

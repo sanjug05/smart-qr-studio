@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import type { Destination } from '@/types/project'
-import { validateUrl } from '@/lib/validation'
+import { normalizeUrl, validateUrl } from '@/lib/validation'
 import './DestinationsStep.css'
 
 const ICON_CHOICES = ['🌐', '📍', '📖', '🏠', '📞', '🛍️', '📅', '🎟️', '💬', '📷', '⭐', '🔗']
@@ -102,9 +102,14 @@ export default function DestinationsStep({
                 <input
                   id={`url-${destination.id}`}
                   className="input"
+                  type="url"
+                  inputMode="url"
                   value={destination.url}
                   placeholder="https://…"
                   onChange={(e) => update(destination.id, { url: e.target.value })}
+                  onBlur={(e) => {
+                    if (validateUrl(e.target.value).valid) update(destination.id, { url: normalizeUrl(e.target.value) })
+                  }}
                 />
                 {!validation.valid ? <span className="error">{validation.message}</span> : null}
               </div>

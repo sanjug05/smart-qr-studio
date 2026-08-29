@@ -12,9 +12,19 @@ export default function LandingPreviewModal({ project, onClose }: { project: QRP
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  // The overlay is a decorative backdrop, not the dialog itself — role="dialog"
+  // belongs on the phone panel below. Clicking the backdrop is a pointer-only
+  // convenience; keyboard/screen-reader users already have the close button
+  // and Escape (registered above), so this doesn't need its own key handler.
   return (
-    <div className="landing-modal-overlay" role="dialog" aria-modal="true" aria-label="Customer landing page preview" onClick={onClose}>
-      <div className="landing-modal-phone" onClick={(e) => e.stopPropagation()}>
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+    <div
+      className="landing-modal-overlay"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className="landing-modal-phone" role="dialog" aria-modal="true" aria-label="Customer landing page preview">
         <button className="landing-modal-close btn btn-ghost" onClick={onClose} aria-label="Close preview">
           ✕
         </button>

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { BrandConfig, Destination, QRProject, QRStyleConfig } from '@/types/project'
-import { createNewProject } from '@/types/project'
-import { projectRepository } from '@/services/storage/projectRepository'
+import { projectRepository, createUniqueProject } from '@/services/storage/projectRepository'
 
 /**
  * Loads (or creates) a project for the builder wizard and autosaves it to
@@ -12,6 +11,7 @@ import { projectRepository } from '@/services/storage/projectRepository'
 export function useProjectDraft(id?: string) {
   const [project, setProject] = useState<QRProject | null>(null)
   const [ready, setReady] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const saveTimer = useRef<number>()
   // A brand-new project (no :id) is only worth persisting once the user
   // actually touches something — otherwise every visit to /create, including
@@ -21,18 +21,20 @@ export function useProjectDraft(id?: string) {
   useEffect(() => {
     let cancelled = false
     setReady(false)
+    setSaveError(null)
     dirtyRef.current = Boolean(id)
 
     async function load() {
       if (id) {
         const existing = await projectRepository.get(id)
+        const fallback = existing ?? (await createUniqueProject())
         if (!cancelled) {
-          setProject(existing ?? createNewProject())
+          setProject(fallback)
           setReady(true)
         }
         return
       }
-      const fresh = createNewProject()
+      const fresh = await createUniqueProject()
       if (!cancelled) {
         setProject(fresh)
         setReady(true)
@@ -48,8 +50,13 @@ export function useProjectDraft(id?: string) {
   useEffect(() => {
     if (!project || !dirtyRef.current) return
     window.clearTimeout(saveTimer.current)
-    saveTimer.current = window.setTimeout(() => {
-      projectRepository.save({ ...project, updatedAt: new Date().toISOString() })
+    saveTimer.current = window.setTimeout(async () => {
+      try {
+        await projectRepository.save({ ...project, updatedAt: new Date().toISOString() })
+        setSaveError(null)
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : 'Could not save this project.')
+      }
     }, 300)
     return () => window.clearTimeout(saveTimer.current)
   }, [project])
@@ -75,5 +82,5 @@ export function useProjectDraft(id?: string) {
     markDirtyAndSet((p) => ({ ...p, qrStyle: { ...p.qrStyle, ...patch } }))
   }
 
-  return { project, ready, updateBrand, updateDestinations, updateDestination, updateQrStyle }
+  return { project, ready, saveError, updateBrand, updateDestinations, updateDestination, updateQrStyle }
 }

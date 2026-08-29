@@ -1,6 +1,5 @@
 import type { QRProject } from '@/types/project'
-import { createNewProject } from '@/types/project'
-import { projectRepository } from './projectRepository'
+import { projectRepository, createUniqueProject } from './projectRepository'
 
 /**
  * AIS is only a demonstration brand — nothing in the app depends on this
@@ -8,7 +7,7 @@ import { projectRepository } from './projectRepository'
  * without a user typing in sample data first.
  */
 export async function loadSampleAisProject(): Promise<QRProject> {
-  const base = createNewProject()
+  const base = await createUniqueProject()
   const project: QRProject = {
     ...base,
     brand: {

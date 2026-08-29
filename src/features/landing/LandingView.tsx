@@ -1,5 +1,5 @@
 import type { QRProject } from '@/types/project'
-import { validateUrl } from '@/lib/validation'
+import { normalizeUrl, validateUrl } from '@/lib/validation'
 import './LandingView.css'
 
 export default function LandingView({ project }: { project: QRProject }) {
@@ -43,7 +43,11 @@ export default function LandingView({ project }: { project: QRProject }) {
             {destinations.map((d) => (
               <a
                 key={d.id}
-                href={d.url}
+                // Normalized, not the raw stored value: a destination saved
+                // as "example.com" (no scheme) would otherwise resolve as a
+                // relative link against this hash-routed page instead of an
+                // absolute external URL.
+                href={normalizeUrl(d.url)}
                 className="landing-destination"
                 style={{ borderColor: brand.secondaryColor }}
               >

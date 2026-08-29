@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import AppShell from '@/components/layout/AppShell'
 import LoadingScreen from '@/components/layout/LoadingScreen'
+import { ErrorBoundary } from '@/components/layout/ErrorBoundary'
 
 // Route-level code splitting matters most here: the customer-facing
 // landing page (/q/:slug) must load fast on a phone straight off a QR
@@ -16,29 +17,40 @@ const NotFound = lazy(() => import('@/pages/NotFound'))
 
 export default function App() {
   return (
-    <HashRouter>
-      <Suspense fallback={<LoadingScreen />}>
-        <Routes>
-          <Route path="/q/:slug" element={<Landing />} />
-          <Route
-            path="/*"
-            element={
-              <AppShell>
-                <Suspense fallback={<LoadingScreen />}>
-                  <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/create" element={<CreateQR />} />
-                    <Route path="/create/:id" element={<CreateQR />} />
-                    <Route path="/codes" element={<MyQRCodes />} />
-                    <Route path="/settings" element={<Settings />} />
-                    <Route path="*" element={<NotFound />} />
-                  </Routes>
-                </Suspense>
-              </AppShell>
-            }
-          />
-        </Routes>
-      </Suspense>
-    </HashRouter>
+    <ErrorBoundary>
+      <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Suspense fallback={<LoadingScreen />}>
+          <Routes>
+            <Route
+              path="/q/:slug"
+              element={
+                <ErrorBoundary>
+                  <Landing />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/*"
+              element={
+                <AppShell>
+                  <ErrorBoundary>
+                    <Suspense fallback={<LoadingScreen />}>
+                      <Routes>
+                        <Route path="/" element={<Dashboard />} />
+                        <Route path="/create" element={<CreateQR />} />
+                        <Route path="/create/:id" element={<CreateQR />} />
+                        <Route path="/codes" element={<MyQRCodes />} />
+                        <Route path="/settings" element={<Settings />} />
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </Suspense>
+                  </ErrorBoundary>
+                </AppShell>
+              }
+            />
+          </Routes>
+        </Suspense>
+      </HashRouter>
+    </ErrorBoundary>
   )
 }
