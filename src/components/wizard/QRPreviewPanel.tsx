@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { QRProject } from '@/types/project'
 import { useVerifiedQr } from '@/hooks/useVerifiedQr'
-import { downloadPng, downloadSvg, copyToClipboard } from '@/services/qr/qrExport'
+import { downloadPng, downloadSvg, downloadClickableQrHtml, copyToClipboard } from '@/services/qr/qrExport'
 import LandingPreviewModal from './LandingPreviewModal'
 import './QRPreviewPanel.css'
 
@@ -16,12 +16,31 @@ export default function QRPreviewPanel({ project, showDownloads }: { project: QR
     window.setTimeout(() => setCopyStatus(null), 2500)
   }
 
+  const qrIsReady = Boolean(shareUrl) && !loading
+
   return (
     <aside className="qr-preview-panel card">
-      <div className="qr-preview-canvas-wrap">
+      {/*
+        Always an <a>, never conditionally a <div>/<a> swap: keeping the
+        element type stable across renders means containerRef's node is
+        never remounted, so the QR that useVerifiedQr just appended into it
+        doesn't get wiped out the instant `shareUrl` changes. Only href
+        (and therefore whether it's a real, focusable link at all) toggles.
+      */}
+      <a
+        className="qr-preview-canvas-wrap qr-preview-canvas-link"
+        href={qrIsReady ? shareUrl : undefined}
+        target={qrIsReady ? '_blank' : undefined}
+        rel={qrIsReady ? 'noopener noreferrer' : undefined}
+        aria-label={qrIsReady ? `Open the Smart QR link${project.brand.companyName ? ` for ${project.brand.companyName}` : ''}` : undefined}
+        onClick={(e) => {
+          if (!qrIsReady) e.preventDefault()
+        }}
+      >
         <div ref={containerRef} className="qr-preview-canvas" aria-hidden={loading} />
         {loading ? <div className="qr-preview-loading">Rendering…</div> : null}
-      </div>
+      </a>
+      {qrIsReady ? <p className="hint qr-preview-click-hint">Tap the QR to open its link.</p> : null}
 
       <div className="qr-preview-status">
         {loading ? null : verified ? (
@@ -53,33 +72,58 @@ export default function QRPreviewPanel({ project, showDownloads }: { project: QR
       </button>
 
       {showDownloads ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              className="btn btn-primary"
-              style={{ flex: 1 }}
-              disabled={!instance || loading}
-              onClick={() => instance && downloadPng(instance, project.brand.companyName, project.slug)}
-            >
-              Download PNG
-            </button>
-            <button
-              className="btn btn-primary"
-              style={{ flex: 1 }}
-              disabled={!instance || loading}
-              onClick={() => instance && downloadSvg(instance, project.brand.companyName, project.slug)}
-            >
-              Download SVG
-            </button>
+        <div className="qr-export-groups">
+          <div className="qr-export-group">
+            <h3 className="qr-export-group-title">Physical / Print</h3>
+            <p className="hint">For printing, laminating, or anywhere someone will scan it with a camera.</p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                disabled={!instance || loading}
+                onClick={() => instance && downloadPng(instance, project.brand.companyName, project.slug)}
+              >
+                Download PNG
+              </button>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                disabled={!instance || loading}
+                onClick={() => instance && downloadSvg(instance, project.brand.companyName, project.slug, shareUrl)}
+              >
+                Download SVG
+              </button>
+            </div>
           </div>
-          {shareUrl ? (
-            <a className="btn btn-secondary" href={shareUrl} target="_blank" rel="noopener noreferrer">
-              Open QR link (test)
-            </a>
-          ) : null}
-          <p className="hint">
-            PNG/SVG image files don't carry click-through metadata on their own — when placing the QR in a PDF, slide
-            deck, or webpage, hyperlink the image to the copied share link above so it's clickable there too.
+
+          <div className="qr-export-group">
+            <h3 className="qr-export-group-title">Digital / Clickable</h3>
+            <p className="hint">For screens, slides, documents, and messages — somewhere a tap should work too.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                className="btn btn-primary"
+                disabled={!instance || loading}
+                onClick={() => instance && downloadClickableQrHtml(instance, project.brand, project.slug, shareUrl)}
+              >
+                Create Clickable QR
+              </button>
+              <button className="btn btn-secondary" disabled={!shareUrl} onClick={() => handleCopy('QR link', shareUrl)}>
+                Copy QR Link
+              </button>
+              {qrIsReady ? (
+                <a className="btn btn-ghost" href={shareUrl} target="_blank" rel="noopener noreferrer">
+                  Open QR link (test)
+                </a>
+              ) : null}
+            </div>
+          </div>
+
+          <p className="hint qr-export-explainer">
+            Scan it when it's printed. Click it when it's on a screen — the QR above, and any downloaded PNG or SVG,
+            can be scanned with a phone camera. To make it tappable somewhere digital, use "Create Clickable QR" for
+            a standalone file, or add the copied link as the hyperlink behind the QR image in PowerPoint, a PDF, or a
+            webpage. For messaging apps, share the image for scanning, or share the link directly for one-tap access
+            — a plain PNG or JPG can't carry a working link on its own.
           </p>
         </div>
       ) : null}

@@ -17,6 +17,28 @@
   margin-bottom: 12px;
 }
 
+/* Only meaningfully a link once it has an href (see QRPreviewPanel.tsx) —
+   an <a> with no href is inert, so this styling only ever shows up when
+   the QR is actually clickable, never as a false affordance. */
+.qr-preview-canvas-link[href] {
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+}
+
+.qr-preview-canvas-link[href]:hover,
+.qr-preview-canvas-link[href]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(109, 94, 249, 0.35);
+}
+
+.qr-preview-canvas-link[href]:active {
+  transform: scale(0.99);
+}
+
+.qr-preview-click-hint {
+  text-align: center;
+  margin: -6px 0 12px;
+}
+
 .qr-preview-canvas svg,
 .qr-preview-canvas canvas {
   max-width: 100%;
@@ -47,4 +69,34 @@
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   margin: 0 0 12px;
+}
+
+.qr-export-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.qr-export-group {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.qr-export-group-title {
+  margin: 0 0 2px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-muted);
+}
+
+.qr-export-group .hint {
+  margin: 0 0 10px;
+}
+
+.qr-export-explainer {
+  margin: 0;
 }
