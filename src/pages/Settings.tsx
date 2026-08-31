@@ -1,9 +1,13 @@
 import { useRef, useState } from 'react'
 import { projectRepository, isValidProject } from '@/services/storage/projectRepository'
+import { useInstallPrompt } from '@/hooks/useInstallPrompt'
+import InstallAppPrompt from '@/components/common/InstallAppPrompt'
+import { APP_VERSION } from '@/version'
 
 export default function Settings() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const { isStandalone } = useInstallPrompt()
 
   const handleExport = async () => {
     const projects = await projectRepository.list()
@@ -58,6 +62,26 @@ export default function Settings() {
   return (
     <div style={{ maxWidth: 640 }}>
       <h1 style={{ marginTop: 0 }}>Settings</h1>
+
+      <section className="card" style={{ padding: 24, marginBottom: 20 }}>
+        <h2 style={{ marginTop: 0, fontSize: '1rem' }}>App</h2>
+        {isStandalone ? (
+          <p style={{ color: 'var(--color-ink-muted)' }}>
+            <span className="badge badge-success" style={{ marginRight: 8 }}>
+              ✓ Installed
+            </span>
+            You're using the installed app.
+          </p>
+        ) : (
+          <div style={{ marginBottom: -20 }}>
+            <InstallAppPrompt dismissible={false} />
+          </div>
+        )}
+        <p style={{ color: 'var(--color-ink-muted)', fontSize: '0.85rem', margin: 0 }}>
+          Smart QR Studio {APP_VERSION} — web app (PWA). Android/iOS store apps aren't published yet; installing adds
+          this web app to your device in the meantime.
+        </p>
+      </section>
 
       <section className="card" style={{ padding: 24, marginBottom: 20 }}>
         <h2 style={{ marginTop: 0, fontSize: '1rem' }}>Local storage</h2>

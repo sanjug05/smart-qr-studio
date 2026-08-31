@@ -7,7 +7,15 @@
     <meta name="description" content="Smart QR Studio — create branded QR codes that open up to five destinations from a single scan." />
     <title>Smart QR Studio</title>
     <link rel="icon" href="%BASE_URL%favicon.svg" type="image/svg+xml" />
-    <!-- vite-plugin-pwa injects the manifest <link> and SW registration script automatically at build time. -->
+    <!--
+      vite-plugin-pwa injects the manifest <link> at build time. Service
+      worker registration is deliberately NOT auto-injected here
+      (injectRegister: false in vite.config.ts) — it's done from React via
+      `virtual:pwa-register/react` (see src/hooks/usePwaUpdate.tsx), which
+      is what lets the app show its own "Update available" prompt instead
+      of Workbox silently swapping versions underneath the user.
+    -->
+    <link rel="apple-touch-icon" href="%BASE_URL%icons/icon-192.png" />
   </head>
   <body>
     <div id="root"></div>

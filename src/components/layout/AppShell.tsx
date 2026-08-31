@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
+import PwaUpdateBanner from './PwaUpdateBanner'
 import './AppShell.css'
 
 const NAV_ITEMS = [
@@ -35,6 +36,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <main id="main-content" className="shell-main">
+        <PwaUpdateBanner />
         {children}
       </main>
 

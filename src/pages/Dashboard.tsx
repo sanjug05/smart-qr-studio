@@ -2,6 +2,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useProjects } from '@/hooks/useProjects'
 import EmptyState from '@/components/common/EmptyState'
 import ProjectCard from '@/components/common/ProjectCard'
+import InstallAppPrompt from '@/components/common/InstallAppPrompt'
 import { loadSampleAisProject } from '@/services/storage/sampleProject'
 
 export default function Dashboard() {
@@ -32,6 +33,13 @@ export default function Dashboard() {
           </button>
         </div>
       </section>
+
+      {/*
+        Gated on having at least one project rather than shown on first
+        paint — this is "after a meaningful action", not an interruption
+        the moment someone opens the app for the first time.
+      */}
+      {!loading && projects.length > 0 ? <InstallAppPrompt /> : null}
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Recent QR Codes</h2>

@@ -1,0 +1,27 @@
+.pwa-update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 20px;
+  margin-bottom: 24px;
+  border-color: var(--color-accent);
+}
+
+.pwa-update-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 480px) {
+  .pwa-update-banner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pwa-update-actions .btn {
+    flex: 1;
+  }
+}

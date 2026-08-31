@@ -18,14 +18,24 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt' hands control to the app's own UpdateAvailable banner
+      // (src/hooks/usePwaUpdate.tsx) instead of silently swapping the
+      // service worker and reloading behind the user's back. Registration
+      // is done manually via `virtual:pwa-register/react`, so nothing
+      // needs injecting into index.html.
+      registerType: 'prompt',
+      injectRegister: false,
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'Smart QR Studio',
         short_name: 'QR Studio',
         description: 'Create branded, multi-destination QR codes.',
         theme_color: '#141417',
-        background_color: '#141417',
+        // Matches the app's actual light background (--color-bg in
+        // global.css), not the dark theme_color — this is what paints
+        // behind the splash icon on first launch, and a dark flash before
+        // a light UI reads as broken rather than premium.
+        background_color: '#f6f6f8',
         display: 'standalone',
         start_url: basePath,
         scope: basePath,
