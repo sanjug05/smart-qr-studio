@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { QRProject, QrDesignConfig, QrDesignTemplateId } from '@/types/project'
 import { createDefaultDesignConfig } from '@/types/project'
 import { useVerifiedQr } from '@/hooks/useVerifiedQr'
-import { downloadDesignedQrPng, downloadDesignedQrSvg, openDigitalQr, copyToClipboard } from '@/services/qr/qrExport'
+import { downloadDesignedQrPng, downloadDesignedQrSvg, openDigitalQr, downloadDigitalQrHtml, copyToClipboard } from '@/services/qr/qrExport'
 import { DESIGN_TEMPLATE_OPTIONS } from '@/services/qr/designTemplates'
 import DesignedQrPreview from './DesignedQrPreview'
 import LandingPreviewModal from './LandingPreviewModal'
@@ -149,7 +149,7 @@ export default function QRPreviewPanel({
       {showDownloads ? (
         <div className="qr-export-groups">
           <div className="qr-export-group">
-            <h3 className="qr-export-group-title">Download Designed QR</h3>
+            <h3 className="qr-export-group-title">Physical / Print</h3>
             <p className="hint">Professional QR artwork with your branding, headline, and scan instruction.</p>
             <div className="qr-export-btn-row">
               <button
@@ -157,7 +157,7 @@ export default function QRPreviewPanel({
                 disabled={!instance || loading || busy !== null}
                 onClick={() => instance && runExport('png', () => downloadDesignedQrPng(instance, project.brand, designConfig, project.slug))}
               >
-                <span>{busy === 'png' ? 'Preparing…' : 'PNG'}</span>
+                <span>{busy === 'png' ? 'Preparing…' : 'Download PNG'}</span>
                 <span className="export-btn-hint">Best for sharing &amp; printing</span>
               </button>
               <button
@@ -165,7 +165,7 @@ export default function QRPreviewPanel({
                 disabled={!instance || loading || busy !== null}
                 onClick={() => instance && runExport('svg', () => downloadDesignedQrSvg(instance, project.brand, designConfig, project.slug, shareUrl))}
               >
-                <span>{busy === 'svg' ? 'Preparing…' : 'SVG'}</span>
+                <span>{busy === 'svg' ? 'Preparing…' : 'Download SVG'}</span>
                 <span className="export-btn-hint">Best for print &amp; design</span>
               </button>
             </div>
@@ -177,22 +177,30 @@ export default function QRPreviewPanel({
               <button
                 className="btn btn-primary export-btn"
                 disabled={!instance || loading || busy !== null}
-                onClick={() => instance && runExport('digital', () => openDigitalQr(instance, project.brand, designConfig, shareUrl))}
+                onClick={() => instance && runExport('digital-open', () => openDigitalQr(instance, project.brand, designConfig, shareUrl))}
               >
-                <span>{busy === 'digital' ? 'Preparing…' : 'Open Digital QR'}</span>
-                <span className="export-btn-hint">Clickable version for digital use</span>
+                <span>{busy === 'digital-open' ? 'Preparing…' : 'Open Digital QR'}</span>
+                <span className="export-btn-hint">Open directly in your browser</span>
               </button>
-              <button className="btn btn-secondary" disabled={!shareUrl} onClick={() => handleCopy('QR link', shareUrl)}>
-                Copy QR Link
+              <button
+                className="btn btn-secondary export-btn"
+                disabled={!instance || loading || busy !== null}
+                onClick={() => instance && runExport('digital-download', () => downloadDigitalQrHtml(instance, project.brand, designConfig, shareUrl))}
+              >
+                <span>{busy === 'digital-download' ? 'Preparing…' : 'Download Digital QR'}</span>
+                <span className="export-btn-hint">Save a clickable HTML version</span>
+              </button>
+              <button className="btn btn-secondary export-btn" disabled={!shareUrl} onClick={() => handleCopy('QR link', shareUrl)}>
+                <span>Copy QR Link</span>
+                <span className="export-btn-hint">Share the link directly</span>
               </button>
             </div>
           </div>
 
           <p className="hint qr-export-explainer">
-            Scan it when it's printed. Click it when it's on a screen. SVG is best for print &amp; design software —
-            some phones don't open SVG files directly, so on mobile use "Open Digital QR" or the PNG instead. For
-            PowerPoint, PDFs, or a webpage, add the copied link as the hyperlink behind the QR image. For messaging
-            apps, share the image for scanning, or share the link directly for one-tap access.
+            Scan it when it's printed. Click it when it's on a screen. SVG is best for print &amp; design — for
+            mobile digital use, open or download the Digital QR instead. For PowerPoint, PDFs, or a webpage, use the
+            copied link as the QR's hyperlink.
           </p>
         </div>
       ) : null}

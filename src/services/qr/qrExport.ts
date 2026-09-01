@@ -201,6 +201,28 @@ export async function openDigitalQr(instance: QRCodeStyling, brand: DesignBrand,
   if (!opened) window.location.assign(url)
 }
 
+function digitalQrFilename(companyName: string): string {
+  const base = companyName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return base ? `${base}-digital-qr.html` : 'digital-qr.html'
+}
+
+/**
+ * "Download Digital QR" — saves the exact same self-contained page that
+ * "Open Digital QR" opens in a tab, as a standalone .html file. Both share
+ * the same `buildDigitalQrHtml` output, so there is one composition (and
+ * one place that escapes user text into it) behind both actions — this
+ * only changes what happens to that markup afterward (download vs open).
+ */
+export async function downloadDigitalQrHtml(instance: QRCodeStyling, brand: DesignBrand, designConfig: QrDesignConfig, shareUrl: string): Promise<void> {
+  const composedSvg = await buildComposedSvg(instance, brand, designConfig)
+  const html = buildDigitalQrHtml(brand, composedSvg, shareUrl)
+  downloadTextFile(html, 'text/html', digitalQrFilename(brand.companyName))
+}
+
 export async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
