@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { BrandConfig, Destination, QRProject, QRStyleConfig } from '@/types/project'
+import type { BrandConfig, Destination, QRProject, QRStyleConfig, QrDesignConfig } from '@/types/project'
+import { createDefaultDesignConfig } from '@/types/project'
 import { projectRepository, createUniqueProject } from '@/services/storage/projectRepository'
 
 /**
@@ -82,5 +83,11 @@ export function useProjectDraft(id?: string) {
     markDirtyAndSet((p) => ({ ...p, qrStyle: { ...p.qrStyle, ...patch } }))
   }
 
-  return { project, ready, saveError, updateBrand, updateDestinations, updateDestination, updateQrStyle }
+  // `designConfig` is optional on QRProject (older saved projects predate
+  // this feature) — default it here so callers never have to null-check.
+  function updateDesignConfig(patch: Partial<QrDesignConfig>) {
+    markDirtyAndSet((p) => ({ ...p, designConfig: { ...(p.designConfig ?? createDefaultDesignConfig()), ...patch } }))
+  }
+
+  return { project, ready, saveError, updateBrand, updateDestinations, updateDestination, updateQrStyle, updateDesignConfig }
 }

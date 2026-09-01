@@ -39,10 +39,17 @@
   margin: -6px 0 12px;
 }
 
-.qr-preview-canvas svg,
-.qr-preview-canvas canvas {
-  max-width: 100%;
-  height: auto;
+/* The real qr-code-styling render target — kept in the layout (not
+   display:none) so the library never renders into a zero-size or
+   non-rendered node, just moved far off-screen. The composed poster
+   (DesignedQrPreview) is what the user actually sees. */
+.qr-preview-hidden-source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  left: -9999px;
+  top: -9999px;
 }
 
 .qr-preview-loading {
@@ -99,4 +106,61 @@
 
 .qr-export-explainer {
   margin: 0;
+}
+
+.qr-export-btn-row {
+  display: flex;
+  gap: 8px;
+}
+
+.export-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  height: auto;
+  padding: 10px 12px;
+  line-height: 1.2;
+}
+
+.export-btn-hint {
+  font-size: 0.72rem;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.qr-design-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 4px 0 16px;
+}
+
+.qr-design-fieldset legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.qr-design-template-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qr-design-template-option {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.qr-design-template-label {
+  font-weight: 700;
+  display: block;
+  font-size: 0.9rem;
 }

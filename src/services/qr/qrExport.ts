@@ -1,5 +1,9 @@
 import type QRCodeStyling from 'qr-code-styling'
-import type { BrandConfig } from '@/types/project'
+import type { BrandConfig, QrDesignConfig } from '@/types/project'
+import { escapeMarkup } from '@/lib/escapeMarkup'
+import { buildDesignedQrSvg, designedSvgToPngDataUrl } from './designComposition'
+
+type DesignBrand = Pick<BrandConfig, 'companyName' | 'tagline' | 'logoDataUrl' | 'primaryColor' | 'secondaryColor'>
 
 function slugFilename(companyName: string, slug: string): string {
   const base = companyName.trim() ? companyName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'smart-qr'
@@ -16,11 +20,18 @@ function downloadTextFile(content: string, mimeType: string, filename: string): 
   URL.revokeObjectURL(url)
 }
 
+function downloadDataUrl(dataUrl: string, filename: string): void {
+  const a = document.createElement('a')
+  a.href = dataUrl
+  a.download = filename
+  a.click()
+}
+
 export async function downloadPng(instance: QRCodeStyling, companyName: string, slug: string): Promise<void> {
   await instance.download({ name: slugFilename(companyName, slug), extension: 'png' })
 }
 
-async function getSvgMarkup(instance: QRCodeStyling): Promise<string> {
+export async function getSvgMarkup(instance: QRCodeStyling): Promise<string> {
   const raw = await instance.getRawData('svg')
   if (!raw) throw new Error('QR code has no SVG data to export.')
   const blob = raw instanceof Blob ? raw : new Blob([raw as BlobPart], { type: 'image/svg+xml' })
@@ -37,8 +48,7 @@ async function getSvgMarkup(instance: QRCodeStyling): Promise<string> {
  * a web page): clicking the code opens the link. Plenty of common contexts
  * — Office/PDF placement, most image viewers, and SVG-as-plain-image use
  * — do not render or activate SVG hyperlinks at all, which is exactly why
- * this is a bonus on top of the dedicated clickable HTML asset
- * (clickableAsset.ts), not a replacement for it.
+ * this is a bonus, not a replacement for the dedicated digital QR experience.
  */
 function wrapSvgWithLink(svgMarkup: string, href: string): string {
   try {
@@ -66,35 +76,50 @@ function wrapSvgWithLink(svgMarkup: string, href: string): string {
   }
 }
 
-export async function downloadSvg(instance: QRCodeStyling, companyName: string, slug: string, shareUrl: string): Promise<void> {
+/**
+ * Builds the full branded poster (logo → company → headline → QR → CTA)
+ * around the exact verified QR SVG. Used by every "designed" export below
+ * — PNG, SVG, and the digital HTML experience — so all three always show
+ * the identical composition, never three different ad-hoc layouts.
+ */
+async function buildComposedSvg(instance: QRCodeStyling, brand: DesignBrand, designConfig: QrDesignConfig): Promise<string> {
+  const qrSvgMarkup = await getSvgMarkup(instance)
+  return buildDesignedQrSvg({ brand, designConfig, qrSvgMarkup })
+}
+
+/** "Download Designed QR" — the primary, print-ready PNG export: the full composition, not the bare QR. */
+export async function downloadDesignedQrPng(instance: QRCodeStyling, brand: DesignBrand, designConfig: QrDesignConfig, slug: string): Promise<void> {
+  const composedSvg = await buildComposedSvg(instance, brand, designConfig)
+  const dataUrl = await designedSvgToPngDataUrl(composedSvg)
+  downloadDataUrl(dataUrl, `${slugFilename(brand.companyName, slug)}-designed.png`)
+}
+
+/** Vector version of the same composition — for print shops and design software. */
+export async function downloadDesignedQrSvg(instance: QRCodeStyling, brand: DesignBrand, designConfig: QrDesignConfig, slug: string, shareUrl: string): Promise<void> {
+  const composedSvg = await buildComposedSvg(instance, brand, designConfig)
+  const linked = wrapSvgWithLink(composedSvg, shareUrl)
+  downloadTextFile(linked, 'image/svg+xml', `${slugFilename(brand.companyName, slug)}-designed.svg`)
+}
+
+/** The bare, undecorated QR — kept available internally (e.g. for advanced/future export scenarios) but no longer the primary user-facing action. */
+export async function downloadRawQrSvg(instance: QRCodeStyling, companyName: string, slug: string, shareUrl: string): Promise<void> {
   const markup = await getSvgMarkup(instance)
   const linked = wrapSvgWithLink(markup, shareUrl)
   downloadTextFile(linked, 'image/svg+xml', `${slugFilename(companyName, slug)}.svg`)
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
-}
-
 /**
- * The technically-correct "clickable QR" asset: a small self-contained
- * HTML file (no external requests, no build step) with the QR wrapped in
- * a real `<a href>`, plus a visible fallback button for anyone who taps
- * the image and nothing happens (some mail/file viewers strip script or
- * disable navigation from an embedded image). Opening this file in any
- * browser — locally, from a download folder, from an email attachment —
- * makes the QR (and the fallback button) genuinely clickable, which a
- * bare PNG or JPG can never be.
+ * The digital QR page: the same branded composition as the PNG/SVG
+ * exports, inline in a self-contained HTML document, with the QR wrapped
+ * in a real `<a href>` plus a visible "Open link" fallback for anyone who
+ * taps the image and nothing happens (some mail/file viewers strip script
+ * or block navigation from an embedded image). No external requests, no
+ * build step — opening it anywhere makes the QR genuinely clickable,
+ * which a bare PNG or JPG can never be.
  */
-function buildClickableQrHtml(
-  brand: Pick<BrandConfig, 'companyName' | 'tagline' | 'primaryColor'>,
-  svgMarkup: string,
-  shareUrl: string
-): string {
-  const companyName = escapeHtml(brand.companyName || 'Smart QR')
-  const tagline = brand.tagline ? escapeHtml(brand.tagline) : ''
-  const href = escapeHtml(shareUrl)
-  const primary = escapeHtml(brand.primaryColor || '#141417')
+function buildDigitalQrHtml(brand: DesignBrand, composedSvgMarkup: string, shareUrl: string): string {
+  const companyName = escapeMarkup(brand.companyName || 'Smart QR')
+  const href = escapeMarkup(shareUrl)
 
   return `<!doctype html>
 <html lang="en">
@@ -114,72 +139,66 @@ function buildClickableQrHtml(
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: #f6f6f8;
     padding: 24px;
+    overflow-x: hidden;
   }
-  .card {
-    background: #ffffff;
-    border: 1px solid #e4e4e9;
-    border-radius: 20px;
-    padding: 32px;
-    max-width: 360px;
-    width: 100%;
-    text-align: center;
-    box-shadow: 0 4px 16px rgba(20, 20, 23, 0.08);
-  }
-  h1 { font-size: 1.2rem; margin: 0 0 4px; color: ${primary}; }
-  p.tagline { margin: 0 0 20px; color: #63636c; font-size: 0.9rem; }
   .qr-link {
-    display: inline-block;
-    border-radius: 16px;
-    padding: 8px;
+    display: block;
+    width: 100%;
+    max-width: 420px;
     line-height: 0;
+    border-radius: 20px;
     transition: box-shadow 120ms ease, transform 80ms ease;
   }
-  .qr-link:hover, .qr-link:focus-visible { box-shadow: 0 0 0 3px rgba(109, 94, 249, 0.35); }
-  .qr-link:active { transform: scale(0.98); }
-  .qr-link svg { display: block; width: 220px; height: 220px; max-width: 100%; }
+  .qr-link:hover, .qr-link:focus-visible { box-shadow: 0 0 0 4px rgba(109, 94, 249, 0.35); }
+  .qr-link:active { transform: scale(0.99); }
+  .qr-link svg { display: block; width: 100%; height: auto; border-radius: 20px; }
   .open-btn {
-    display: inline-flex;
+    display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    margin-top: 20px;
+    margin: 16px auto 0;
+    max-width: 420px;
     min-height: 44px;
     padding: 0 20px;
     border-radius: 8px;
-    background: ${primary};
+    background: #141417;
     color: #ffffff;
     text-decoration: none;
     font-weight: 600;
     font-size: 0.95rem;
   }
-  .hint { margin-top: 16px; color: #9a9aa2; font-size: 0.76rem; }
+  .wrap { width: 100%; max-width: 420px; }
 </style>
 </head>
 <body>
-  <div class="card">
-    <h1>${companyName}</h1>
-    ${tagline ? `<p class="tagline">${tagline}</p>` : ''}
+  <div class="wrap">
     <a class="qr-link" href="${href}" target="_blank" rel="noopener noreferrer" aria-label="Open ${companyName}'s Smart QR link">
-      ${svgMarkup}
+      ${composedSvgMarkup}
     </a>
-    <div>
-      <a class="open-btn" href="${href}" target="_blank" rel="noopener noreferrer">Open link ↗</a>
-    </div>
-    <p class="hint">Tap the QR or the button above to open. Powered by Smart QR Studio.</p>
+    <a class="open-btn" href="${href}" target="_blank" rel="noopener noreferrer">Open link ↗</a>
   </div>
 </body>
 </html>
 `
 }
 
-export async function downloadClickableQrHtml(
-  instance: QRCodeStyling,
-  brand: Pick<BrandConfig, 'companyName' | 'tagline' | 'primaryColor'>,
-  slug: string,
-  shareUrl: string
-): Promise<void> {
-  const markup = await getSvgMarkup(instance)
-  const html = buildClickableQrHtml(brand, markup, shareUrl)
-  downloadTextFile(html, 'text/html', `${slugFilename(brand.companyName, slug)}-clickable.html`)
+/**
+ * "Open Digital QR" — opens the branded, clickable composition directly in
+ * a new browser tab (rather than a file the user has to go find afterward,
+ * which is exactly the friction mobile downloads of HTML/SVG files run
+ * into). The tab is a real page: taps or clicks on the QR, or the fallback
+ * button, navigate to the exact share URL.
+ */
+export async function openDigitalQr(instance: QRCodeStyling, brand: DesignBrand, designConfig: QrDesignConfig, shareUrl: string): Promise<void> {
+  const composedSvg = await buildComposedSvg(instance, brand, designConfig)
+  const html = buildDigitalQrHtml(brand, composedSvg, shareUrl)
+  const blob = new Blob([html], { type: 'text/html' })
+  const url = URL.createObjectURL(blob)
+  const opened = window.open(url, '_blank', 'noopener,noreferrer')
+  // Popup blockers can silently refuse window.open — fall back to a normal
+  // navigation in the current tab rather than doing nothing.
+  if (!opened) window.location.assign(url)
 }
 
 export async function copyToClipboard(text: string): Promise<boolean> {

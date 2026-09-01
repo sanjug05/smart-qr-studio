@@ -12,7 +12,7 @@ import './CreateQR.css'
 export default function CreateQR() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { project, ready, saveError, updateBrand, updateDestinations, updateQrStyle } = useProjectDraft(id)
+  const { project, ready, saveError, updateBrand, updateDestinations, updateQrStyle, updateDesignConfig } = useProjectDraft(id)
   const [step, setStep] = useState(1)
 
   // react-router keeps this component instance mounted across /create <->
@@ -72,7 +72,7 @@ export default function CreateQR() {
           {step === 2 && !hasValidDestination ? <p className="error" style={{ marginTop: 8 }}>Add at least one destination before generating the QR.</p> : null}
         </div>
 
-        <QRPreviewPanel project={project} showDownloads={step === 4} />
+        <QRPreviewPanel project={project} showDownloads={step === 4} onChangeDesign={updateDesignConfig} />
       </div>
     </div>
   )

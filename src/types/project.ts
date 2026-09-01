@@ -28,6 +28,23 @@ export interface QRStyleConfig {
   brandingLogoDataUrl?: string
 }
 
+/**
+ * The three poster/card layouts the designed-QR export can use. Purely a
+ * presentation choice — see src/services/qr/designTemplates.ts for what
+ * each one actually looks like. Universal by construction: every field a
+ * template reads (company name, logo, brand colors, tagline) already
+ * exists on every project regardless of what kind of organization it is.
+ */
+export type QrDesignTemplateId = 'clean' | 'premium' | 'classic'
+
+export interface QrDesignConfig {
+  template: QrDesignTemplateId
+  /** Shown above the QR. User-editable; never invented from nothing. */
+  headline: string
+  /** Shown below the QR as the scan instruction. User-editable. */
+  ctaText: string
+}
+
 export type DestinationType = 'website' | 'location' | 'brochure' | 'virtual-tour' | 'custom'
 
 export interface Destination {
@@ -48,6 +65,12 @@ export interface QRProject {
   brand: BrandConfig
   destinations: Destination[]
   qrStyle: QRStyleConfig
+  /**
+   * Optional because projects saved before this feature existed won't have
+   * it — every read site falls back to `createDefaultDesignConfig()`
+   * rather than assuming it's present. New projects always get one.
+   */
+  designConfig?: QrDesignConfig
   createdAt: string
   updatedAt: string
 }
@@ -102,6 +125,14 @@ export function createDefaultQRStyle(): QRStyleConfig {
   }
 }
 
+export function createDefaultDesignConfig(): QrDesignConfig {
+  return {
+    template: 'clean',
+    headline: 'Scan to Explore',
+    ctaText: 'Scan to explore'
+  }
+}
+
 export function createNewProject(): QRProject {
   const now = new Date().toISOString()
   return {
@@ -110,6 +141,7 @@ export function createNewProject(): QRProject {
     brand: createDefaultBrand(),
     destinations: createDefaultDestinations(),
     qrStyle: createDefaultQRStyle(),
+    designConfig: createDefaultDesignConfig(),
     createdAt: now,
     updatedAt: now
   }

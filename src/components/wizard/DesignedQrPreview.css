@@ -1,0 +1,17 @@
+.designed-qr-preview-image {
+  width: 100%;
+  max-width: 280px;
+  height: auto;
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  margin: 0 auto;
+}
+
+.designed-qr-preview-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  color: var(--color-ink-muted);
+  font-size: 0.85rem;
+}
