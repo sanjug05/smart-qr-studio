@@ -11,6 +11,8 @@ export interface UseVerifiedQrState {
   message?: string
   loading: boolean
   shareUrl: string
+  /** True only for a `qrMode: 'dynamic'` project with no publicId yet — see useDynamicQrProvisioning.ts. */
+  notProvisioned?: boolean
 }
 
 /**
@@ -34,7 +36,7 @@ export function useVerifiedQr(project: QRProject): UseVerifiedQrState {
     setState((s) => ({ ...s, loading: true }))
 
     const timer = window.setTimeout(async () => {
-      const { result, verified, fallbackApplied, message } = await generateVerifiedQr(project)
+      const { result, verified, fallbackApplied, message, notProvisioned } = await generateVerifiedQr(project)
       if (cancelled) return
 
       instanceRef.current = result?.instance ?? null
@@ -43,7 +45,7 @@ export function useVerifiedQr(project: QRProject): UseVerifiedQrState {
         result?.instance.append(containerRef.current)
       }
 
-      setState({ verified, fallbackApplied, message, loading: false, shareUrl: result?.data ?? '' })
+      setState({ verified, fallbackApplied, message, notProvisioned, loading: false, shareUrl: result?.data ?? '' })
     }, 200)
 
     return () => {
@@ -54,9 +56,11 @@ export function useVerifiedQr(project: QRProject): UseVerifiedQrState {
     // share URL or the QR's visual style changes. Destinations must be a
     // dependency here — unlike the old slug-based link, they're now
     // encoded directly into the QR itself (see shareLinkService.ts), not
-    // just looked up later from storage.
+    // just looked up later from storage. qrMode/dynamicQr must be included
+    // too — for a dynamic project, the publicId (not brand/destinations)
+    // is what the QR actually encodes (see qrCodeFactory.ts).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(project.brand), JSON.stringify(project.destinations), JSON.stringify(project.qrStyle)])
+  }, [JSON.stringify(project.brand), JSON.stringify(project.destinations), JSON.stringify(project.qrStyle), project.qrMode, project.dynamicQr?.publicId])
 
   return { containerRef, instance: instanceRef.current, ...state }
 }

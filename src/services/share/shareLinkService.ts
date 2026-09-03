@@ -20,11 +20,30 @@ import { buildShareablePayload, encodeSharePayload } from './sharePayload'
  */
 const SHARE_TOKEN_PREFIX = 'p.'
 
+/**
+ * Dynamic QR's own unambiguous prefix, added alongside `p.` (static) and
+ * the legacy plain slug — never replacing either. Same reasoning as the
+ * comment above: a short prefix that can't appear in the other two
+ * formats means Landing.tsx can dispatch on it directly, with no
+ * length/pattern guessing (see README → "Static/Dynamic resolution").
+ */
+const DYNAMIC_TOKEN_PREFIX = 'd.'
+
 export function getShareUrl(project: QRProject): string {
   const payload = buildShareablePayload(project)
   const token = SHARE_TOKEN_PREFIX + encodeSharePayload(payload)
   const base = window.location.origin + import.meta.env.BASE_URL
   return `${base}#/q/${token}`
+}
+
+/**
+ * The permanent Dynamic QR URL — encodes only `publicId`, never any
+ * destination data. This is what actually gets printed; the backend is
+ * consulted fresh on every scan (see src/services/dynamicQr).
+ */
+export function getDynamicShareUrl(publicId: string): string {
+  const base = window.location.origin + import.meta.env.BASE_URL
+  return `${base}#/q/${DYNAMIC_TOKEN_PREFIX}${publicId}`
 }
 
 export function isShareToken(token: string): boolean {
@@ -33,4 +52,12 @@ export function isShareToken(token: string): boolean {
 
 export function stripShareTokenPrefix(token: string): string {
   return token.slice(SHARE_TOKEN_PREFIX.length)
+}
+
+export function isDynamicShareToken(token: string): boolean {
+  return token.startsWith(DYNAMIC_TOKEN_PREFIX)
+}
+
+export function stripDynamicShareTokenPrefix(token: string): string {
+  return token.slice(DYNAMIC_TOKEN_PREFIX.length)
 }

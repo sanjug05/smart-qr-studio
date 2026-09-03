@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import type { QRProject, QrDesignConfig, QrDesignTemplateId } from '@/types/project'
+import type { DynamicQrInfo, QRProject, QrDesignConfig, QrDesignTemplateId } from '@/types/project'
 import { createDefaultDesignConfig } from '@/types/project'
 import { useVerifiedQr } from '@/hooks/useVerifiedQr'
+import { useDynamicQr } from '@/hooks/useDynamicQr'
 import { downloadDesignedQrPng, downloadDesignedQrSvg, openDigitalQr, downloadDigitalQrHtml, copyToClipboard } from '@/services/qr/qrExport'
 import { DESIGN_TEMPLATE_OPTIONS } from '@/services/qr/designTemplates'
 import DesignedQrPreview from './DesignedQrPreview'
@@ -11,13 +12,17 @@ import './QRPreviewPanel.css'
 export default function QRPreviewPanel({
   project,
   showDownloads,
-  onChangeDesign
+  onChangeDesign,
+  onDynamicQrCreated
 }: {
   project: QRProject
   showDownloads: boolean
   onChangeDesign: (patch: Partial<QrDesignConfig>) => void
+  onDynamicQrCreated: (info: DynamicQrInfo) => void
 }) {
-  const { containerRef, instance, verified, fallbackApplied, message, loading, shareUrl } = useVerifiedQr(project)
+  const { containerRef, instance, verified, fallbackApplied, message, loading, shareUrl, notProvisioned } = useVerifiedQr(project)
+  const isDynamic = project.qrMode === 'dynamic'
+  const dynamicQr = useDynamicQr(project, onDynamicQrCreated)
   const [showLandingPreview, setShowLandingPreview] = useState(false)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -40,6 +45,7 @@ export default function QRPreviewPanel({
   }
 
   const qrIsReady = Boolean(shareUrl) && !loading
+  const isProvisioningDynamicQr = isDynamic && (notProvisioned || dynamicQr.provisioning)
 
   return (
     <aside className="qr-preview-panel card">
@@ -63,18 +69,55 @@ export default function QRPreviewPanel({
           if (!qrIsReady) e.preventDefault()
         }}
       >
-        {loading ? <div className="qr-preview-loading">Rendering…</div> : <DesignedQrPreview instance={instance} brand={project.brand} designConfig={designConfig} />}
+        {isProvisioningDynamicQr ? (
+          <div className="qr-preview-loading" role="status">
+            Creating your Dynamic QR…
+          </div>
+        ) : loading ? (
+          <div className="qr-preview-loading">Rendering…</div>
+        ) : (
+          <DesignedQrPreview instance={instance} brand={project.brand} designConfig={designConfig} />
+        )}
       </a>
       {qrIsReady ? <p className="hint qr-preview-click-hint">Tap the QR to open its link.</p> : null}
 
-      <div className="qr-preview-status">
-        {loading ? null : verified ? (
-          <span className="badge badge-success">✓ Verified scannable</span>
-        ) : (
-          <span className="badge badge-danger">⚠ Could not verify</span>
-        )}
-        {fallbackApplied && !loading ? <span className="badge badge-warning">Branding auto-adjusted</span> : null}
-      </div>
+      {isDynamic ? (
+        <div className="qr-preview-status">
+          <span className="badge badge-accent">Dynamic QR</span>
+          {project.dynamicQr?.publicId ? <span className="hint">ID: {project.dynamicQr.publicId}</span> : null}
+        </div>
+      ) : null}
+
+      {dynamicQr.error ? <p className="qr-preview-message">{dynamicQr.error}</p> : null}
+
+      {isDynamic && project.dynamicQr?.publicId ? (
+        <div className="field" style={{ marginBottom: 12 }}>
+          <button className="btn btn-secondary" style={{ width: '100%' }} disabled={dynamicQr.publishing} onClick={() => dynamicQr.publish()}>
+            {dynamicQr.publishing ? 'Publishing…' : 'Publish changes'}
+          </button>
+          <span className="hint">
+            The printed QR never changes. Publishing updates what it resolves to — the next scan sees these
+            destinations.
+          </span>
+          <span className="hint">Your management access is stored on this device. Account-based QR management will be added later.</span>
+          {dynamicQr.publishedVersion !== null && !dynamicQr.publishing && !dynamicQr.error ? (
+            <span className="hint" role="status">
+              Published (version {dynamicQr.publishedVersion}).
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!isProvisioningDynamicQr ? (
+        <div className="qr-preview-status">
+          {loading ? null : verified ? (
+            <span className="badge badge-success">✓ Verified scannable</span>
+          ) : (
+            <span className="badge badge-danger">⚠ Could not verify</span>
+          )}
+          {fallbackApplied && !loading ? <span className="badge badge-warning">Branding auto-adjusted</span> : null}
+        </div>
+      ) : null}
 
       {message ? <p className="qr-preview-message">{message}</p> : null}
 

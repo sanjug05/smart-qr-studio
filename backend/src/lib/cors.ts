@@ -1,0 +1,51 @@
+import type { Env } from '../types'
+import { DYNAMIC_QR_TEST_OVERRIDE_HEADER } from './entitlements'
+
+/**
+ * Environment-driven CORS allowlist (see README → "CORS"). No origin is
+ * ever hardcoded in source — `ALLOWED_ORIGINS` is a per-environment Worker
+ * variable set in wrangler.toml, so adding a future custom domain or a
+ * Capacitor app origin is a config change, not a code change.
+ */
+function allowedOrigins(env: Env): string[] {
+  return env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+}
+
+/**
+ * Only ever echoes back the caller's own Origin, and only when it's on the
+ * allowlist — never a different allowed origin as a fallback. Previously
+ * this fell back to `allowed[0]` for a non-matching Origin, which handed
+ * out a valid `Access-Control-Allow-Origin` value (just for a different
+ * site) instead of none at all; a browser only delivers the response to
+ * script when the header matches its OWN origin, so that specific bug was
+ * not itself exploitable, but it meant no request was ever actually
+ * denied a CORS header — omitting the header for a non-matching Origin is
+ * the correct, intentional restriction instead.
+ */
+function corsHeadersFor(request: Request, env: Env): Record<string, string> {
+  const origin = request.headers.get('Origin')
+  const allowed = allowedOrigins(env)
+  const headers: Record<string, string> = {
+    'Vary': 'Origin',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, OPTIONS',
+    'Access-Control-Allow-Headers': `Content-Type, Authorization, ${DYNAMIC_QR_TEST_OVERRIDE_HEADER}`,
+    'Access-Control-Max-Age': '86400'
+  }
+  if (origin && allowed.includes(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin
+  }
+  return headers
+}
+
+/** Wraps a Response with the appropriate CORS headers for the calling origin. */
+export function withCors(response: Response, request: Request, env: Env): Response {
+  const headers = new Headers(response.headers)
+  for (const [key, value] of Object.entries(corsHeadersFor(request, env))) {
+    headers.set(key, value)
+  }
+  return new Response(response.body, { status: response.status, headers })
+}
+
+export function handlePreflight(request: Request, env: Env): Response {
+  return new Response(null, { status: 204, headers: corsHeadersFor(request, env) })
+}

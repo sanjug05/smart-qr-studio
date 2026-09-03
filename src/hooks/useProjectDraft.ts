@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { BrandConfig, Destination, QRProject, QRStyleConfig, QrDesignConfig } from '@/types/project'
+import type { BrandConfig, Destination, DynamicQrInfo, QRProject, QRStyleConfig, QrDesignConfig, QrMode } from '@/types/project'
 import { createDefaultDesignConfig } from '@/types/project'
 import { projectRepository, createUniqueProject } from '@/services/storage/projectRepository'
 
@@ -89,5 +89,21 @@ export function useProjectDraft(id?: string) {
     markDirtyAndSet((p) => ({ ...p, designConfig: { ...(p.designConfig ?? createDefaultDesignConfig()), ...patch } }))
   }
 
-  return { project, ready, saveError, updateBrand, updateDestinations, updateDestination, updateQrStyle, updateDesignConfig }
+  // Switching qrMode after a Dynamic QR was already provisioned would strand
+  // its publicId (never regenerated, per README → "Permanent QR ID") — so
+  // switching back to Static drops the stale dynamicQr reference rather
+  // than leaving a dangling, unused backend record referenced from state
+  // that will never touch it again.
+  function updateQrMode(qrMode: QrMode) {
+    markDirtyAndSet((p) => ({ ...p, qrMode, ...(qrMode === 'static' ? { dynamicQr: undefined } : {}) }))
+  }
+
+  // Called exactly once, by useDynamicQr.ts, right after the backend
+  // create() call succeeds — never invented client-side, since `publicId`
+  // must come from the backend that will actually resolve it.
+  function setDynamicQrInfo(info: DynamicQrInfo) {
+    markDirtyAndSet((p) => ({ ...p, dynamicQr: info }))
+  }
+
+  return { project, ready, saveError, updateBrand, updateDestinations, updateDestination, updateQrStyle, updateDesignConfig, updateQrMode, setDynamicQrInfo }
 }

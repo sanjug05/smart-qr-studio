@@ -1,5 +1,5 @@
 import type { QRProject } from '@/types/project'
-import { buildQr, type BuildQrResult } from './qrCodeFactory'
+import { buildQr, DynamicQrNotProvisionedError, type BuildQrResult } from './qrCodeFactory'
 import { stepDownBranding } from './branding'
 import { validateQrScannable } from './qrValidation'
 
@@ -8,6 +8,8 @@ export interface VerifiedQrResult {
   verified: boolean
   fallbackApplied: boolean
   message?: string
+  /** True only for a `qrMode: 'dynamic'` project with no publicId yet — see useDynamicQrProvisioning.ts. */
+  notProvisioned?: boolean
 }
 
 const MAX_ATTEMPTS = 4
@@ -38,7 +40,10 @@ export async function generateVerifiedQr(project: QRProject): Promise<VerifiedQr
   let built: BuildQrResult
   try {
     built = buildQr(project)
-  } catch {
+  } catch (err) {
+    if (err instanceof DynamicQrNotProvisionedError) {
+      return { result: null, verified: false, fallbackApplied: false, notProvisioned: true }
+    }
     return { result: null, verified: false, fallbackApplied: false, message: DATA_TOO_LARGE_MESSAGE }
   }
 

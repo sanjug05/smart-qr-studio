@@ -6,7 +6,11 @@ import jsxA11y from 'eslint-plugin-jsx-a11y'
 import globals from 'globals'
 
 export default tseslint.config(
-  { ignores: ['dist', 'node_modules', 'android', 'ios'] },
+  // `backend/` is a separate deployable project (Cloudflare Workers) with
+  // its own tsconfig and runtime globals (D1, cloudflare:test) — it is
+  // typechecked and tested independently (see backend/package.json), not
+  // linted by this frontend config.
+  { ignores: ['dist', 'node_modules', 'android', 'ios', 'backend'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended, jsxA11y.flatConfigs.recommended],
     files: ['**/*.{ts,tsx}'],

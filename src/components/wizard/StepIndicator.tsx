@@ -1,4 +1,4 @@
-const STEPS = ['Brand', 'Destinations', 'QR Style', 'Preview']
+const STEPS = ['QR Type', 'Brand', 'Destinations', 'QR Style', 'Preview']
 
 export default function StepIndicator({ step }: { step: number }) {
   return (

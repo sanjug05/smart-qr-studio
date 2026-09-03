@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useProjectDraft } from '@/hooks/useProjectDraft'
 import StepIndicator from '@/components/wizard/StepIndicator'
+import QrTypeStep from '@/components/wizard/QrTypeStep'
 import BrandStep from '@/components/wizard/BrandStep'
 import DestinationsStep from '@/components/wizard/DestinationsStep'
 import StyleStep from '@/components/wizard/StyleStep'
@@ -9,10 +10,13 @@ import PreviewStep from '@/components/wizard/PreviewStep'
 import QRPreviewPanel from '@/components/wizard/QRPreviewPanel'
 import './CreateQR.css'
 
+const TOTAL_STEPS = 5
+
 export default function CreateQR() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { project, ready, saveError, updateBrand, updateDestinations, updateQrStyle, updateDesignConfig } = useProjectDraft(id)
+  const { project, ready, saveError, updateBrand, updateDestinations, updateQrStyle, updateDesignConfig, updateQrMode, setDynamicQrInfo } =
+    useProjectDraft(id)
   const [step, setStep] = useState(1)
 
   // react-router keeps this component instance mounted across /create <->
@@ -29,7 +33,7 @@ export default function CreateQR() {
   }
 
   const hasValidDestination = project.destinations.some((d) => d.enabled && d.url.trim())
-  const canAdvanceFromDestinations = step !== 2 || hasValidDestination
+  const canAdvanceFromDestinations = step !== 3 || hasValidDestination
 
   return (
     <div>
@@ -50,17 +54,18 @@ export default function CreateQR() {
 
       <div className="create-qr-layout">
         <div className="card create-qr-form">
-          {step === 1 ? <BrandStep brand={project.brand} onChange={updateBrand} /> : null}
-          {step === 2 ? <DestinationsStep destinations={project.destinations} onChange={updateDestinations} /> : null}
-          {step === 3 ? <StyleStep qrStyle={project.qrStyle} companyName={project.brand.companyName} onChange={updateQrStyle} /> : null}
-          {step === 4 ? <PreviewStep project={project} /> : null}
+          {step === 1 ? <QrTypeStep qrMode={project.qrMode ?? 'static'} onChange={updateQrMode} /> : null}
+          {step === 2 ? <BrandStep brand={project.brand} onChange={updateBrand} /> : null}
+          {step === 3 ? <DestinationsStep destinations={project.destinations} onChange={updateDestinations} /> : null}
+          {step === 4 ? <StyleStep qrStyle={project.qrStyle} companyName={project.brand.companyName} onChange={updateQrStyle} /> : null}
+          {step === 5 ? <PreviewStep project={project} /> : null}
 
           <div className="create-qr-nav">
             <button className="btn btn-secondary" disabled={step === 1} onClick={() => setStep((s) => Math.max(1, s - 1))}>
               Back
             </button>
-            {step < 4 ? (
-              <button className="btn btn-primary" disabled={!canAdvanceFromDestinations} onClick={() => setStep((s) => Math.min(4, s + 1))}>
+            {step < TOTAL_STEPS ? (
+              <button className="btn btn-primary" disabled={!canAdvanceFromDestinations} onClick={() => setStep((s) => Math.min(TOTAL_STEPS, s + 1))}>
                 Next
               </button>
             ) : (
@@ -69,10 +74,15 @@ export default function CreateQR() {
               </button>
             )}
           </div>
-          {step === 2 && !hasValidDestination ? <p className="error" style={{ marginTop: 8 }}>Add at least one destination before generating the QR.</p> : null}
+          {step === 3 && !hasValidDestination ? <p className="error" style={{ marginTop: 8 }}>Add at least one destination before generating the QR.</p> : null}
         </div>
 
-        <QRPreviewPanel project={project} showDownloads={step === 4} onChangeDesign={updateDesignConfig} />
+        <QRPreviewPanel
+          project={project}
+          showDownloads={step === TOTAL_STEPS}
+          onChangeDesign={updateDesignConfig}
+          onDynamicQrCreated={setDynamicQrInfo}
+        />
       </div>
     </div>
   )

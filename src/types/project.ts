@@ -45,6 +45,32 @@ export interface QrDesignConfig {
   ctaText: string
 }
 
+/**
+ * Whether this project's QR is self-contained (`static`, the original
+ * architecture — see sharePayload.ts) or resolves through the Dynamic QR
+ * backend by a permanent identifier (`dynamic` — see
+ * src/services/dynamicQr). Optional and defaulting to `static` for the
+ * same backward-compatibility reason `designConfig` is optional: every
+ * project saved before this feature existed lacks the field entirely, and
+ * must keep behaving exactly as it always has (see README → "Migration
+ * safety" — existing projects are never auto-converted).
+ */
+export type QrMode = 'static' | 'dynamic'
+
+/**
+ * Present once a Dynamic QR has actually been created on the backend
+ * (see DynamicQrService.create). `publicId` is permanent — printed QR
+ * artwork encodes it directly and must never be regenerated when it
+ * changes. Deliberately does NOT include the management token — that is
+ * looked up separately via `dynamicQrAuthorizationService`, keyed by
+ * `publicId`, so a secret credential is never mixed into project data
+ * that might later be exported/backed up (see Settings → "Export backup").
+ */
+export interface DynamicQrInfo {
+  publicId: string
+  createdAt: string
+}
+
 export type DestinationType = 'website' | 'location' | 'brochure' | 'virtual-tour' | 'custom'
 
 export interface Destination {
@@ -71,6 +97,10 @@ export interface QRProject {
    * rather than assuming it's present. New projects always get one.
    */
   designConfig?: QrDesignConfig
+  /** See QrMode. Absent on projects saved before Dynamic QR existed — every read site falls back to 'static'. */
+  qrMode?: QrMode
+  /** Present only once qrMode === 'dynamic' AND the Dynamic QR has actually been created on the backend. */
+  dynamicQr?: DynamicQrInfo
   createdAt: string
   updatedAt: string
 }
@@ -142,6 +172,7 @@ export function createNewProject(): QRProject {
     destinations: createDefaultDestinations(),
     qrStyle: createDefaultQRStyle(),
     designConfig: createDefaultDesignConfig(),
+    qrMode: 'static',
     createdAt: now,
     updatedAt: now
   }
@@ -163,4 +194,33 @@ export function generateSlug(): string {
 export interface LandingContent {
   brand: Pick<BrandConfig, 'companyName' | 'tagline' | 'logoDataUrl' | 'primaryColor' | 'secondaryColor' | 'backgroundColor'>
   destinations: Array<Pick<Destination, 'id' | 'label' | 'url' | 'description' | 'icon' | 'customIconDataUrl' | 'enabled' | 'order'>>
+}
+
+/**
+ * Builds the exact payload a Dynamic QR create/update call sends — the
+ * same `LandingContent` shape the landing page already renders, with
+ * internal-only fields (e.g. `Destination.type`) explicitly left out
+ * rather than forwarded to a backend that has no use for them.
+ */
+export function toLandingContent(project: Pick<QRProject, 'brand' | 'destinations'>): LandingContent {
+  return {
+    brand: {
+      companyName: project.brand.companyName,
+      tagline: project.brand.tagline,
+      logoDataUrl: project.brand.logoDataUrl,
+      primaryColor: project.brand.primaryColor,
+      secondaryColor: project.brand.secondaryColor,
+      backgroundColor: project.brand.backgroundColor
+    },
+    destinations: project.destinations.map((d) => ({
+      id: d.id,
+      label: d.label,
+      url: d.url,
+      description: d.description,
+      icon: d.icon,
+      customIconDataUrl: d.customIconDataUrl,
+      enabled: d.enabled,
+      order: d.order
+    }))
+  }
 }

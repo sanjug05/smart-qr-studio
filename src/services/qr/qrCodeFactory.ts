@@ -1,12 +1,38 @@
 import QRCodeStyling, { type Options as QRCodeStylingOptions } from 'qr-code-styling'
 import type { QRProject } from '@/types/project'
 import { resolveBranding, moduleStyleToCornerDotType, moduleStyleToCornerSquareType, moduleStyleToDotType, type EffectiveBranding } from './branding'
-import { getShareUrl } from '@/services/share/shareLinkService'
+import { getShareUrl, getDynamicShareUrl } from '@/services/share/shareLinkService'
 
 export interface BuildQrResult {
   instance: QRCodeStyling
   branding: EffectiveBranding
   data: string
+}
+
+/**
+ * Thrown by buildQr() for a `qrMode: 'dynamic'` project that hasn't been
+ * created on the Dynamic QR backend yet (no `dynamicQr.publicId`). There is
+ * no meaningful URL to encode until that happens — see
+ * useDynamicQrProvisioning.ts, which is what actually creates it and is
+ * the only thing that should ever clear this state. Distinguished from a
+ * generic build failure so callers (see generateVerifiedQr.ts) can show
+ * "creating your Dynamic QR…" instead of a scary/wrong error message.
+ */
+export class DynamicQrNotProvisionedError extends Error {}
+
+/**
+ * Chooses what the QR actually encodes. Static projects are completely
+ * unaffected — `getShareUrl` is exactly what ran before Dynamic QR
+ * existed. A dynamic project instead encodes its permanent publicId, so
+ * editing destinations later never requires touching this URL or the
+ * printed artwork again (see README → "Dynamic QR architecture").
+ */
+function resolveQrTargetUrl(project: QRProject): string {
+  if (project.qrMode === 'dynamic') {
+    if (!project.dynamicQr?.publicId) throw new DynamicQrNotProvisionedError('This project has not been assigned a Dynamic QR identifier yet.')
+    return getDynamicShareUrl(project.dynamicQr.publicId)
+  }
+  return getShareUrl(project)
 }
 
 /**
@@ -23,7 +49,7 @@ export interface BuildQrResult {
  * generateVerifiedQr.ts matters more here than it would for a short URL.
  */
 export function buildQr(project: QRProject, brandingOverride?: EffectiveBranding): BuildQrResult {
-  const data = getShareUrl(project)
+  const data = resolveQrTargetUrl(project)
   const { qrStyle, brand } = project
 
   const branding =
