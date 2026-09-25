@@ -1,13 +1,30 @@
 import { Link } from 'react-router-dom'
 import type { QRProject } from '@/types/project'
-import { getShareUrl } from '@/services/share/shareLinkService'
+import { getQrShareUrl, DynamicQrNotProvisionedError } from '@/services/share/shareLinkService'
 import { copyToClipboard } from '@/services/qr/qrExport'
 
+/**
+ * Same canonical URL the QR itself encodes (a Dynamic project's permanent
+ * `d.<publicId>` link — previously this card built the static payload URL
+ * for every project, which for a Dynamic QR would have copied a link that
+ * embeds today's destinations and can never be updated). Empty for a
+ * dynamic project that hasn't been created on the backend yet.
+ */
+function safeShareUrl(project: QRProject): string {
+  try {
+    return getQrShareUrl(project)
+  } catch (err) {
+    if (err instanceof DynamicQrNotProvisionedError) return ''
+    throw err
+  }
+}
+
 export default function ProjectCard({ project, onDelete, onChanged }: { project: QRProject; onDelete: () => void; onChanged: () => void }) {
-  const shareUrl = getShareUrl(project)
+  const shareUrl = safeShareUrl(project)
   const enabledCount = project.destinations.filter((d) => d.enabled).length
 
   const handleCopy = async () => {
+    if (!shareUrl) return
     const ok = await copyToClipboard(shareUrl)
     if (!ok) window.prompt('Copy this link:', shareUrl)
   }
@@ -50,7 +67,7 @@ export default function ProjectCard({ project, onDelete, onChanged }: { project:
         <Link to={`/create/${project.id}`} className="btn btn-secondary" style={{ flex: 1, minWidth: 100 }}>
           Edit
         </Link>
-        <button className="btn btn-ghost" onClick={handleCopy}>
+        <button className="btn btn-ghost" onClick={handleCopy} disabled={!shareUrl}>
           Copy link
         </button>
         <button className="btn btn-ghost" onClick={handleDelete} aria-label={`Delete ${project.brand.companyName || 'project'}`}>

@@ -1,7 +1,11 @@
 import QRCodeStyling, { type Options as QRCodeStylingOptions } from 'qr-code-styling'
 import type { QRProject } from '@/types/project'
 import { resolveBranding, moduleStyleToCornerDotType, moduleStyleToCornerSquareType, moduleStyleToDotType, type EffectiveBranding } from './branding'
-import { getShareUrl, getDynamicShareUrl } from '@/services/share/shareLinkService'
+import { getQrShareUrl, DynamicQrNotProvisionedError } from '@/services/share/shareLinkService'
+
+// Re-exported so existing importers (generateVerifiedQr.ts) keep working
+// unchanged — the class itself now lives next to the canonical URL helper.
+export { DynamicQrNotProvisionedError }
 
 export interface BuildQrResult {
   instance: QRCodeStyling
@@ -10,30 +14,12 @@ export interface BuildQrResult {
 }
 
 /**
- * Thrown by buildQr() for a `qrMode: 'dynamic'` project that hasn't been
- * created on the Dynamic QR backend yet (no `dynamicQr.publicId`). There is
- * no meaningful URL to encode until that happens — see
- * useDynamicQrProvisioning.ts, which is what actually creates it and is
- * the only thing that should ever clear this state. Distinguished from a
- * generic build failure so callers (see generateVerifiedQr.ts) can show
- * "creating your Dynamic QR…" instead of a scary/wrong error message.
+ * What the QR encodes is decided in exactly one place —
+ * `getQrShareUrl` (see shareLinkService.ts). Static projects are unchanged;
+ * a dynamic project encodes its permanent publicId, so editing destinations
+ * later never requires touching this URL or the printed artwork again.
  */
-export class DynamicQrNotProvisionedError extends Error {}
-
-/**
- * Chooses what the QR actually encodes. Static projects are completely
- * unaffected — `getShareUrl` is exactly what ran before Dynamic QR
- * existed. A dynamic project instead encodes its permanent publicId, so
- * editing destinations later never requires touching this URL or the
- * printed artwork again (see README → "Dynamic QR architecture").
- */
-function resolveQrTargetUrl(project: QRProject): string {
-  if (project.qrMode === 'dynamic') {
-    if (!project.dynamicQr?.publicId) throw new DynamicQrNotProvisionedError('This project has not been assigned a Dynamic QR identifier yet.')
-    return getDynamicShareUrl(project.dynamicQr.publicId)
-  }
-  return getShareUrl(project)
-}
+const resolveQrTargetUrl = getQrShareUrl
 
 /**
  * Builds a ready-to-render QRCodeStyling instance for a project. Always

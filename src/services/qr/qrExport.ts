@@ -1,9 +1,25 @@
 import type QRCodeStyling from 'qr-code-styling'
 import type { BrandConfig, QrDesignConfig } from '@/types/project'
 import { escapeMarkup } from '@/lib/escapeMarkup'
-import { buildDesignedQrSvg, designedSvgToPngDataUrl } from './designComposition'
+import { buildDesignedQrSvg, renderDesignedQrPng } from './designComposition'
+import { rasterizeQrSvg } from './qrRaster'
+import {
+  assertSafeShareUrl,
+  buildEmailQrContent,
+  copyEmailQr,
+  integerScaleSize,
+  nativeQrSize,
+  EMAIL_QR_DISPLAY_SIZE,
+  type EmailCopyOutcome,
+  type EmailQrContent
+} from './qrShare'
 
 type DesignBrand = Pick<BrandConfig, 'companyName' | 'tagline' | 'logoDataUrl' | 'primaryColor' | 'secondaryColor'>
+
+/** "Download QR" PNG target edge length — large enough to stay sharp in slides, documents and print-at-size (rounded up to a whole multiple of the QR's native size; see integerScaleSize). */
+const QR_ONLY_PNG_TARGET = 1200
+/** "Copy for Email": twice the on-screen size, so it stays crisp on high-DPI screens without bloating the pasted message. */
+const EMAIL_QR_PNG_TARGET = EMAIL_QR_DISPLAY_SIZE * 2
 
 function slugFilename(companyName: string, slug: string): string {
   const base = companyName.trim() ? companyName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'smart-qr'
@@ -27,15 +43,37 @@ function downloadDataUrl(dataUrl: string, filename: string): void {
   a.click()
 }
 
-export async function downloadPng(instance: QRCodeStyling, companyName: string, slug: string): Promise<void> {
-  await instance.download({ name: slugFilename(companyName, slug), extension: 'png' })
-}
-
 export async function getSvgMarkup(instance: QRCodeStyling): Promise<string> {
   const raw = await instance.getRawData('svg')
   if (!raw) throw new Error('QR code has no SVG data to export.')
   const blob = raw instanceof Blob ? raw : new Blob([raw as BlobPart], { type: 'image/svg+xml' })
   return blob.text()
+}
+
+/**
+ * Rasterizes the bare QR's SVG to a square PNG data URI at exactly `size`px.
+ * The source is vector, so this re-renders at the target size rather than
+ * upscaling a small bitmap. Opaque white behind the code unless the caller
+ * asks for transparency (the QR Style step's "Transparent background"
+ * option) — email always asks for opaque, since a transparent QR turns
+ * invisible on a dark-mode message background.
+ */
+async function qrSvgToPngDataUrl(svgMarkup: string, size: number, options: { transparent?: boolean } = {}): Promise<string> {
+  return (await rasterizeQrSvg(svgMarkup, size, options)).toDataURL('image/png')
+}
+
+/**
+ * "Download QR" — PNG (1440px at the default 480px QR size). ONLY the code itself: no company name, logo,
+ * tagline, call to action, border, or Smart QR frame. (A branding image
+ * *inside* the QR's own center, if the QR Style step enabled one, is part of
+ * the code and stays — see README → "How QR branding works".) What it
+ * encodes is whatever the verified QR instance encodes — the canonical
+ * `getQrShareUrl` value — so a Dynamic QR downloads its permanent link.
+ */
+export async function downloadQrOnlyPng(instance: QRCodeStyling, companyName: string, slug: string, options: { transparent?: boolean } = {}): Promise<void> {
+  const svg = await getSvgMarkup(instance)
+  const dataUrl = await qrSvgToPngDataUrl(svg, integerScaleSize(QR_ONLY_PNG_TARGET, nativeQrSize(svg)), options)
+  downloadDataUrl(dataUrl, `${slugFilename(companyName, slug)}-qr.png`)
 }
 
 /**
@@ -87,25 +125,49 @@ async function buildComposedSvg(instance: QRCodeStyling, brand: DesignBrand, des
   return buildDesignedQrSvg({ brand, designConfig, qrSvgMarkup })
 }
 
-/** "Download Designed QR" — the primary, print-ready PNG export: the full composition, not the bare QR. */
+/** "Download Smart QR" — PNG. The full branded composition (logo, name, headline, QR, frame, CTA), not the bare QR. Reuses the one composition engine (designComposition.ts). */
 export async function downloadDesignedQrPng(instance: QRCodeStyling, brand: DesignBrand, designConfig: QrDesignConfig, slug: string): Promise<void> {
-  const composedSvg = await buildComposedSvg(instance, brand, designConfig)
-  const dataUrl = await designedSvgToPngDataUrl(composedSvg)
-  downloadDataUrl(dataUrl, `${slugFilename(brand.companyName, slug)}-designed.png`)
+  // Not `buildComposedSvg` + a generic SVG rasterizer: the QR is rasterized on
+  // its own at a pixel-aligned scale (see renderDesignedQrPng).
+  const qrSvgMarkup = await getSvgMarkup(instance)
+  const dataUrl = await renderDesignedQrPng({ brand, designConfig, qrSvgMarkup })
+  downloadDataUrl(dataUrl, `${slugFilename(brand.companyName, slug)}-smart-qr.png`)
 }
 
-/** Vector version of the same composition — for print shops and design software. */
+/** "Download Smart QR" — SVG. Vector version of the same composition, for print shops and design software. */
 export async function downloadDesignedQrSvg(instance: QRCodeStyling, brand: DesignBrand, designConfig: QrDesignConfig, slug: string, shareUrl: string): Promise<void> {
   const composedSvg = await buildComposedSvg(instance, brand, designConfig)
-  const linked = wrapSvgWithLink(composedSvg, shareUrl)
-  downloadTextFile(linked, 'image/svg+xml', `${slugFilename(brand.companyName, slug)}-designed.svg`)
+  const linked = wrapSvgWithLink(composedSvg, assertSafeShareUrl(shareUrl))
+  downloadTextFile(linked, 'image/svg+xml', `${slugFilename(brand.companyName, slug)}-smart-qr.svg`)
 }
 
-/** The bare, undecorated QR — kept available internally (e.g. for advanced/future export scenarios) but no longer the primary user-facing action. */
-export async function downloadRawQrSvg(instance: QRCodeStyling, companyName: string, slug: string, shareUrl: string): Promise<void> {
+/**
+ * "Download QR" — SVG. The bare vector QR and nothing else, hyperlinked to
+ * the QR's own URL for the contexts (browsers, some vector editors) that
+ * honor SVG links — the wrapper adds no visible element and cannot change
+ * how the code scans.
+ */
+export async function downloadQrOnlySvg(instance: QRCodeStyling, companyName: string, slug: string, shareUrl: string): Promise<void> {
   const markup = await getSvgMarkup(instance)
-  const linked = wrapSvgWithLink(markup, shareUrl)
-  downloadTextFile(linked, 'image/svg+xml', `${slugFilename(companyName, slug)}.svg`)
+  const linked = wrapSvgWithLink(markup, assertSafeShareUrl(shareUrl))
+  downloadTextFile(linked, 'image/svg+xml', `${slugFilename(companyName, slug)}-qr.svg`)
+}
+
+/**
+ * Builds the "Copy for Email" content: the QR-only image (opaque white,
+ * 600px PNG — email clients don't render SVG) inside a real link, plus the
+ * brand text as live, accessible HTML text rather than baked into a picture.
+ * See qrShare.ts for the structure and the reasoning behind it.
+ */
+export async function prepareEmailQrContent(instance: QRCodeStyling, brand: DesignBrand, designConfig: QrDesignConfig, shareUrl: string): Promise<EmailQrContent> {
+  const svg = await getSvgMarkup(instance)
+  const qrPngDataUrl = await qrSvgToPngDataUrl(svg, integerScaleSize(EMAIL_QR_PNG_TARGET, nativeQrSize(svg)), { transparent: false })
+  return buildEmailQrContent({ brand, designConfig, shareUrl, qrPngDataUrl })
+}
+
+/** "Copy for Email" — copies the clickable block as rich HTML, degrading gracefully (see copyEmailQr). */
+export function copyEmailQrBlock(instance: QRCodeStyling, brand: DesignBrand, designConfig: QrDesignConfig, shareUrl: string): Promise<EmailCopyOutcome> {
+  return copyEmailQr(() => prepareEmailQrContent(instance, brand, designConfig, shareUrl))
 }
 
 /**
@@ -119,7 +181,7 @@ export async function downloadRawQrSvg(instance: QRCodeStyling, companyName: str
  */
 function buildDigitalQrHtml(brand: DesignBrand, composedSvgMarkup: string, shareUrl: string): string {
   const companyName = escapeMarkup(brand.companyName || 'Smart QR')
-  const href = escapeMarkup(shareUrl)
+  const href = escapeMarkup(assertSafeShareUrl(shareUrl))
 
   return `<!doctype html>
 <html lang="en">

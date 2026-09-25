@@ -46,6 +46,40 @@ export function getDynamicShareUrl(publicId: string): string {
   return `${base}#/q/${DYNAMIC_TOKEN_PREFIX}${publicId}`
 }
 
+/**
+ * Thrown for a `qrMode: 'dynamic'` project that hasn't been created on the
+ * Dynamic QR backend yet (no `dynamicQr.publicId`). There is no meaningful
+ * URL to encode or share until that happens — see useDynamicQr.ts, which is
+ * what actually creates it. Distinguished from a generic failure so callers
+ * (see generateVerifiedQr.ts) can show "creating your Dynamic QR…" instead
+ * of a scary/wrong error message.
+ */
+export class DynamicQrNotProvisionedError extends Error {}
+
+/**
+ * THE canonical answer to "what URL does this project's QR encode?" — the
+ * one function every display, download, copy, and email path consumes, so
+ * no feature can drift into building its own URL:
+ *
+ * - Static  → the self-contained `p.<payload>` link (unchanged behavior).
+ * - Dynamic → the permanent `d.<publicId>` link, never the current
+ *   destinations and never anything derived from them.
+ *
+ * Deliberately takes only the project (no management token, no
+ * destination URL anywhere in its output for a Dynamic QR). `getShareUrl`
+ * and `getDynamicShareUrl` above remain the low-level builders; call sites
+ * outside this file should use this instead of picking one themselves.
+ *
+ * @throws DynamicQrNotProvisionedError for a dynamic project with no publicId yet.
+ */
+export function getQrShareUrl(project: QRProject): string {
+  if (project.qrMode === 'dynamic') {
+    if (!project.dynamicQr?.publicId) throw new DynamicQrNotProvisionedError('This project has not been assigned a Dynamic QR identifier yet.')
+    return getDynamicShareUrl(project.dynamicQr.publicId)
+  }
+  return getShareUrl(project)
+}
+
 export function isShareToken(token: string): boolean {
   return token.startsWith(SHARE_TOKEN_PREFIX)
 }

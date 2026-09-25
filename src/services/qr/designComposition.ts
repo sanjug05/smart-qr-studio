@@ -2,6 +2,8 @@ import type { BrandConfig, QrDesignConfig } from '@/types/project'
 import { companyInitials, sanitizeCompanyName } from '@/lib/validation'
 import { escapeMarkup } from '@/lib/escapeMarkup'
 import { getDesignTemplateTheme } from './designTemplates'
+import { nativeQrSize } from './qrShare'
+import { loadSvgImage, rasterizeQrSvg } from './qrRaster'
 
 /**
  * Renders the verified QR inside a branded poster/card composition —
@@ -46,6 +48,13 @@ export interface DesignedQrInput {
   designConfig: QrDesignConfig
   /** Raw SVG markup from the already-verified QR — see qrExport.ts's getSvgMarkup. */
   qrSvgMarkup: string
+  /**
+   * Draw everything except the QR itself (the panel it sits on is still
+   * drawn). Only `renderDesignedQrPng` uses this: it rasterizes the QR
+   * separately at a pixel-aligned scale and places it into the panel. The
+   * SVG and Digital QR outputs never set it.
+   */
+  omitQr?: boolean
 }
 
 function measure(text: string, size: number, weight = 700): number {
@@ -118,7 +127,7 @@ function embedQr(qrSvgMarkup: string, x: number, y: number, size: number): strin
   }
 }
 
-export function buildDesignedQrSvg({ brand, designConfig, qrSvgMarkup }: DesignedQrInput): string {
+export function buildDesignedQrSvg({ brand, designConfig, qrSvgMarkup, omitQr = false }: DesignedQrInput): string {
   const theme = getDesignTemplateTheme(designConfig.template, brand)
   const centerX = CANVAS_WIDTH / 2
 
@@ -178,7 +187,7 @@ export function buildDesignedQrSvg({ brand, designConfig, qrSvgMarkup }: Designe
     the QR is never drawn directly on it.
   -->
   <rect x="${qrX}" y="${QR_PANEL_Y}" width="${QR_PANEL_SIZE}" height="${QR_PANEL_SIZE}" rx="24" fill="${theme.qrPanelColor}" stroke="${theme.qrPanelBorderColor}" stroke-width="2" />
-  ${embedQr(qrSvgMarkup, qrX + QR_PANEL_PADDING, QR_PANEL_Y + QR_PANEL_PADDING, qrInnerSize)}
+  ${omitQr ? '' : embedQr(qrSvgMarkup, qrX + QR_PANEL_PADDING, QR_PANEL_Y + QR_PANEL_PADDING, qrInnerSize)}
 
   ${cta ? `<text x="${centerX}" y="${CTA_Y}" font-family="${FONT_FAMILY}" font-size="${ctaSize}" font-weight="600" fill="${theme.ctaColor}" text-anchor="middle">${escapeMarkup(cta)}</text>` : ''}
 
@@ -186,28 +195,71 @@ export function buildDesignedQrSvg({ brand, designConfig, qrSvgMarkup }: Designe
 </svg>`
 }
 
-/** Rasterizes the composed poster to a PNG data URL at a given pixel width, preserving the ISO-ratio aspect. */
-export async function designedSvgToPngDataUrl(svgMarkup: string, targetWidth = 1200): Promise<string> {
-  const blob = new Blob([svgMarkup], { type: 'image/svg+xml' })
-  const url = URL.createObjectURL(blob)
-  try {
-    const img = new Image()
-    img.src = url
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve()
-      img.onerror = () => reject(new Error('Could not rasterize the designed QR.'))
-    })
-    const aspect = (img.height || CANVAS_HEIGHT) / (img.width || CANVAS_WIDTH)
-    const canvas = document.createElement('canvas')
-    canvas.width = targetWidth
-    canvas.height = Math.round(targetWidth * aspect)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('Canvas 2D context unavailable')
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    return canvas.toDataURL('image/png')
-  } finally {
-    URL.revokeObjectURL(url)
-  }
+/** Poster PNG width to aim for; the real width is nudged so the QR lands on a whole-number scale (see alignedPosterScale). */
+export const DESIGNED_PNG_TARGET_WIDTH = 1600
+
+export interface AlignedPosterScale {
+  /** Whole-number multiple of the QR's native size the QR is rasterized at. */
+  qrScale: number
+  /** The QR's raster edge in output pixels: `nativeQr * qrScale`, always an integer. */
+  qrBoxPx: number
+  /** Output pixels per poster unit. */
+  scale: number
+  width: number
+  height: number
+}
+
+/**
+ * Chooses the poster PNG size so the QR box lands on a whole multiple of its
+ * native size — without changing the poster's layout at all.
+ *
+ * The QR box is `QR_PANEL_SIZE - 2*QR_PANEL_PADDING` (580) poster units and
+ * the poster is 1000 units wide, so any output width fixes the QR's scale
+ * (`580/N * width/1000`). A fixed width (the old 1200) therefore forces a
+ * fractional one — about 1.45x for a 480px QR. Instead, pick the whole
+ * multiple `k` nearest the target width, then derive the width from it:
+ * `width = 1000 * (N*k) / 580`. Everything else in the poster is vector and
+ * simply follows that scale. The QR is never made smaller to achieve this;
+ * only the output resolution moves (about 1655px wide for the default QR).
+ */
+export function alignedPosterScale(nativeQr: number, targetWidth = DESIGNED_PNG_TARGET_WIDTH): AlignedPosterScale {
+  const native = Math.max(1, Math.round(nativeQr))
+  const qrInner = QR_PANEL_SIZE - QR_PANEL_PADDING * 2
+  const qrScale = Math.max(1, Math.round((targetWidth * (qrInner / CANVAS_WIDTH)) / native))
+  const qrBoxPx = native * qrScale
+  const scale = qrBoxPx / qrInner
+  return { qrScale, qrBoxPx, scale, width: Math.round(CANVAS_WIDTH * scale), height: Math.round(CANVAS_HEIGHT * scale) }
+}
+
+/**
+ * The "Smart QR" PNG. Two layers, so the QR is never resampled by the
+ * poster's own scaling:
+ *   1. the poster (background, frame, logo, text, panel — everything from
+ *      `buildDesignedQrSvg`, unchanged) rasterized at the aligned width; and
+ *   2. the QR rasterized on its own at a whole multiple of its native size
+ *      and copied 1:1 onto the panel at whole-pixel coordinates, centered
+ *      exactly where the SVG version places it.
+ * The QR's data, colors and geometry are exactly those of the verified
+ * instance; only *how it is sampled into pixels* differs.
+ */
+export async function renderDesignedQrPng(input: DesignedQrInput, targetWidth = DESIGNED_PNG_TARGET_WIDTH): Promise<string> {
+  const aligned = alignedPosterScale(nativeQrSize(input.qrSvgMarkup), targetWidth)
+
+  const posterImg = await loadSvgImage(buildDesignedQrSvg({ ...input, omitQr: true }))
+  const canvas = document.createElement('canvas')
+  canvas.width = aligned.width
+  canvas.height = aligned.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas 2D context unavailable')
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.drawImage(posterImg, 0, 0, CANVAS_WIDTH * aligned.scale, CANVAS_HEIGHT * aligned.scale)
+
+  // Same centre the SVG embed uses: panel origin + padding + half the inner box.
+  const centerX = ((CANVAS_WIDTH - QR_PANEL_SIZE) / 2 + QR_PANEL_PADDING + (QR_PANEL_SIZE - QR_PANEL_PADDING * 2) / 2) * aligned.scale
+  const centerY = (QR_PANEL_Y + QR_PANEL_PADDING + (QR_PANEL_SIZE - QR_PANEL_PADDING * 2) / 2) * aligned.scale
+  const qrCanvas = await rasterizeQrSvg(input.qrSvgMarkup, aligned.qrBoxPx, { transparent: true })
+  ctx.drawImage(qrCanvas, Math.round(centerX - aligned.qrBoxPx / 2), Math.round(centerY - aligned.qrBoxPx / 2))
+
+  return canvas.toDataURL('image/png')
 }
