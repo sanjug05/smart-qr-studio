@@ -16,6 +16,7 @@ const MAX_ID_COLLISION_RETRIES = 5
 export async function createQr(request: Request, env: Env): Promise<Response> {
   const allowed = canUse('dynamicQr', {
     environment: env.ENVIRONMENT,
+    configuredDefaultPlan: env.DEFAULT_PLAN,
     overrideHeaderValue: request.headers.get(DYNAMIC_QR_TEST_OVERRIDE_HEADER),
     configuredOverrideSecret: env.DYNAMIC_QR_TEST_OVERRIDE_SECRET
   })

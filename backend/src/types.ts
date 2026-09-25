@@ -13,6 +13,13 @@ export interface Env {
   ENVIRONMENT: 'development' | 'staging' | 'production'
   ALLOWED_ORIGINS: string
   /**
+   * Optional plain var naming the plan every caller of this deployment is
+   * treated as (`free` | `pro` | `business`) until per-account plans
+   * exist. Unset or unrecognized → the safe per-environment default in
+   * lib/entitlements.ts. Not a secret.
+   */
+  DEFAULT_PLAN?: string
+  /**
    * A Worker *secret* (set via `wrangler secret put`, never a plaintext
    * `wrangler.toml` var) that, when present, allows a request carrying the
    * matching `X-Dynamic-QR-Test-Override` header to bypass the

@@ -16,11 +16,25 @@ export interface EntitlementService {
 }
 
 /**
+ * The plan this build was explicitly configured to run as, via the
+ * build-time `VITE_DEFAULT_PLAN` (`free` | `pro` | `business`). Missing or
+ * unrecognized values yield `undefined`, so a typo can never grant more than
+ * the environment default below would.
+ */
+function configuredPlan(): Plan | undefined {
+  const value: string | undefined = import.meta.env.VITE_DEFAULT_PLAN
+  return value !== undefined && Object.prototype.hasOwnProperty.call(PLAN_ENTITLEMENTS, value) ? (value as Plan) : undefined
+}
+
+/**
  * V1 implementation: no accounts/billing exist yet, so entitlement is
- * decided by the deployed environment alone. `development` and any Vite
- * dev server run as `pro` so Dynamic QR can be built and tested end-to-end
- * without billing; a production build defaults every visitor to `free`
- * ("production entitlement must default safely").
+ * decided by the deployed environment alone. The product is currently
+ * operated at Business level, which the GitHub Pages workflow declares
+ * with `VITE_DEFAULT_PLAN=business` — no plan tiers are sold yet. Without
+ * that variable the original safe defaults apply: `development` and any
+ * Vite dev server run as `pro` so Dynamic QR can be built and tested
+ * end-to-end without billing; a production build defaults every visitor to
+ * `free` ("production entitlement must default safely").
  *
  * The one exception is a deliberately-configured test-override build (see
  * config.ts's `getDynamicQrTestOverrideSecret`) — this only ever comes
@@ -35,7 +49,7 @@ export interface EntitlementService {
  * the backend's matching secret.
  */
 class EnvironmentEntitlementService implements EntitlementService {
-  private readonly plan: Plan = import.meta.env.PROD && !getDynamicQrTestOverrideSecret() ? 'free' : 'pro'
+  private readonly plan: Plan = configuredPlan() ?? (import.meta.env.PROD && !getDynamicQrTestOverrideSecret() ? 'free' : 'pro')
 
   canUse(key: EntitlementKey): boolean {
     return PLAN_ENTITLEMENTS[this.plan][key]

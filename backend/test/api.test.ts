@@ -351,6 +351,52 @@ describe('Management token security', () => {
   })
 })
 
+describe('Production DEFAULT_PLAN (current Business-level operation)', () => {
+  afterEach(() => {
+    delete (env as unknown as Record<string, unknown>).DEFAULT_PLAN
+  })
+
+  it('allows creation in production when DEFAULT_PLAN=business, with no override header at all', async () => {
+    const originalEnv = env.ENVIRONMENT
+    ;(env as unknown as { ENVIRONMENT: string }).ENVIRONMENT = 'production'
+    ;(env as unknown as Record<string, unknown>).DEFAULT_PLAN = 'business'
+    try {
+      const res = await SELF.fetch('https://api.test/v1/qr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(VALID_CONTENT)
+      })
+      expect(res.status).toBe(201)
+    } finally {
+      ;(env as unknown as { ENVIRONMENT: string }).ENVIRONMENT = originalEnv
+    }
+  })
+
+  it('still rejects invalid content and still 403s when DEFAULT_PLAN=free — validation and entitlement are not bypassed', async () => {
+    const originalEnv = env.ENVIRONMENT
+    ;(env as unknown as { ENVIRONMENT: string }).ENVIRONMENT = 'production'
+    try {
+      ;(env as unknown as Record<string, unknown>).DEFAULT_PLAN = 'business'
+      const bad = await SELF.fetch('https://api.test/v1/qr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...VALID_CONTENT, destinations: [{ ...VALID_CONTENT.destinations[0], url: 'javascript:alert(1)' }] })
+      })
+      expect(bad.status).toBe(422)
+
+      ;(env as unknown as Record<string, unknown>).DEFAULT_PLAN = 'free'
+      const denied = await SELF.fetch('https://api.test/v1/qr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(VALID_CONTENT)
+      })
+      expect(denied.status).toBe(403)
+    } finally {
+      ;(env as unknown as { ENVIRONMENT: string }).ENVIRONMENT = originalEnv
+    }
+  })
+})
+
 describe('Production entitlement test-override (fail-closed)', () => {
   afterEach(() => {
     delete (env as unknown as Record<string, unknown>).DYNAMIC_QR_TEST_OVERRIDE_SECRET

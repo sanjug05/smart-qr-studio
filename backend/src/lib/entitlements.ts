@@ -36,12 +36,24 @@ export const DYNAMIC_QR_TEST_OVERRIDE_HEADER = 'X-Dynamic-QR-Test-Override'
  * safely"). Swapping this for a real per-user plan lookup later changes
  * only this function's body, not its callers.
  */
-export function resolveEnvironmentDefaultPlan(environment: string): Plan {
+export function resolveEnvironmentDefaultPlan(environment: string, configuredPlan?: string): Plan {
+  // An explicit, valid `DEFAULT_PLAN` var wins — this is how a deployment is
+  // declared "everyone is on plan X" without touching code (the product is
+  // currently operated at Business level everywhere). Anything missing or
+  // unrecognized falls through to the safe environment default below, so a
+  // typo can never accidentally grant more than the environment would.
+  if (isPlan(configuredPlan)) return configuredPlan
   return environment === 'production' ? 'free' : 'pro'
+}
+
+function isPlan(value: string | undefined): value is Plan {
+  return value === 'free' || value === 'pro' || value === 'business'
 }
 
 export interface EntitlementCheckInput {
   environment: string
+  /** `env.DEFAULT_PLAN` — a plain (non-secret) `wrangler.toml` var. Optional; see resolveEnvironmentDefaultPlan(). */
+  configuredDefaultPlan?: string
   /** The exact value of the `X-Dynamic-QR-Test-Override` request header, or null if absent. Never read from a query string. */
   overrideHeaderValue: string | null
   /** `env.DYNAMIC_QR_TEST_OVERRIDE_SECRET` — a Worker *secret*, not a `wrangler.toml` var. Undefined on every environment unless explicitly provisioned. */
@@ -78,6 +90,6 @@ export function isTestOverrideActive(input: Pick<EntitlementCheckInput, 'overrid
 
 export function canUse(key: EntitlementKey, input: EntitlementCheckInput): boolean {
   if (isTestOverrideActive(input)) return true
-  const plan = resolveEnvironmentDefaultPlan(input.environment)
+  const plan = resolveEnvironmentDefaultPlan(input.environment, input.configuredDefaultPlan)
   return PLAN_ENTITLEMENTS[plan][key]
 }

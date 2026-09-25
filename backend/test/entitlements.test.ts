@@ -11,6 +11,28 @@ describe('resolveEnvironmentDefaultPlan', () => {
   })
 })
 
+describe('resolveEnvironmentDefaultPlan — configured DEFAULT_PLAN', () => {
+  it('a valid configured plan wins over the environment default (business everywhere today)', () => {
+    expect(resolveEnvironmentDefaultPlan('production', 'business')).toBe('business')
+    expect(resolveEnvironmentDefaultPlan('production', 'pro')).toBe('pro')
+    expect(resolveEnvironmentDefaultPlan('production', 'free')).toBe('free')
+  })
+  it('an unset, empty, or unrecognized value falls back to the safe environment default', () => {
+    expect(resolveEnvironmentDefaultPlan('production', undefined)).toBe('free')
+    expect(resolveEnvironmentDefaultPlan('production', '')).toBe('free')
+    expect(resolveEnvironmentDefaultPlan('production', 'enterprise')).toBe('free')
+    expect(resolveEnvironmentDefaultPlan('production', 'BUSINESS')).toBe('free')
+    expect(resolveEnvironmentDefaultPlan('staging', 'nonsense')).toBe('pro')
+  })
+  it('canUse follows the configured plan, and still respects a configured "free"', () => {
+    const base = { environment: 'production', overrideHeaderValue: null, configuredOverrideSecret: undefined }
+    expect(canUse('dynamicQr', { ...base, configuredDefaultPlan: 'business' })).toBe(true)
+    expect(canUse('dynamicQr', { ...base, configuredDefaultPlan: 'free' })).toBe(false)
+    expect(canUse('dynamicQr', { ...base, configuredDefaultPlan: 'bogus' })).toBe(false)
+    expect(canUse('dynamicQr', base)).toBe(false)
+  })
+})
+
 describe('isTestOverrideActive — fails closed on every axis', () => {
   it('is false when no secret is configured, even if a header is sent', () => {
     expect(isTestOverrideActive({ overrideHeaderValue: 'anything', configuredOverrideSecret: undefined })).toBe(false)

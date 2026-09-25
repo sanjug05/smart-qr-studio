@@ -46,10 +46,15 @@ database_id = "REPLACE_WITH_WRANGLER_D1_CREATE_OUTPUT"
 migrations_dir = "migrations"
 
 # ---------------------------------------------------------------------------
-# production — dynamicQr defaults to false for every caller here unless a
-# future plan/billing system says otherwise (see src/lib/entitlements.ts).
+# production — the product currently operates at Business level for every
+# caller (no Free/Pro/Business tiers are being sold yet), declared by the
+# plain `DEFAULT_PLAN` var below. Remove that one var and production falls
+# back to the safe default (`free`, dynamicQr off) — see
+# src/lib/entitlements.ts. Keep it in step with the frontend's
+# VITE_DEFAULT_PLAN (set in .github/workflows/deploy.yml).
 #
-# To test Dynamic QR end-to-end against this exact configuration without
+# Separately, a narrower escape hatch exists for testing Dynamic QR
+# end-to-end against this exact configuration without
 # enabling it for real production traffic, provision (never commit) a
 # secret — this is deliberately NOT a `vars` entry above, since `vars` are
 # plaintext in wrangler.toml and this value must not be:
@@ -59,7 +64,7 @@ migrations_dir = "migrations"
 # override path does not exist at all — see src/lib/entitlements.ts.
 # ---------------------------------------------------------------------------
 [env.production]
-vars = { ENVIRONMENT = "production", ALLOWED_ORIGINS = "https://sanjug05.github.io" }
+vars = { ENVIRONMENT = "production", ALLOWED_ORIGINS = "https://sanjug05.github.io", DEFAULT_PLAN = "business" }
 
 [[env.production.d1_databases]]
 binding = "DB"
