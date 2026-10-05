@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { QRProject } from '@/types/project'
 import { getQrShareUrl, DynamicQrNotProvisionedError } from '@/services/share/shareLinkService'
@@ -19,7 +20,24 @@ function safeShareUrl(project: QRProject): string {
   }
 }
 
-export default function ProjectCard({ project, onDelete, onChanged }: { project: QRProject; onDelete: () => void; onChanged: () => void }) {
+interface ProjectCardProps {
+  project: QRProject
+  onDelete: () => void
+  onChanged?: () => void
+  /** Replaces the default Edit link (e.g. a cloud project must be copied to this device before editing). */
+  onEdit?: () => void
+  /** Small status chips shown next to the title (cloud/device, unsaved…). */
+  badges?: ReactNode
+  /** Extra actions appended after Edit / Copy link / Delete (Duplicate, Save to account…). */
+  extraActions?: ReactNode
+}
+
+function formatUpdated(iso: string): string {
+  const t = Date.parse(iso)
+  return Number.isFinite(t) ? new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
+}
+
+export default function ProjectCard({ project, onDelete, onChanged, onEdit, badges, extraActions }: ProjectCardProps) {
   const shareUrl = safeShareUrl(project)
   const enabledCount = project.destinations.filter((d) => d.enabled).length
 
@@ -36,6 +54,7 @@ export default function ProjectCard({ project, onDelete, onChanged }: { project:
   }
 
   void onChanged
+  const isDynamic = project.qrMode === 'dynamic'
 
   return (
     <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -59,17 +78,28 @@ export default function ProjectCard({ project, onDelete, onChanged }: { project:
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.brand.companyName || 'Untitled brand'}</div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--color-ink-muted)' }}>{enabledCount} destination{enabledCount === 1 ? '' : 's'} enabled</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--color-ink-muted)' }}>
+            {isDynamic ? 'Dynamic QR' : 'Static QR'} · {enabledCount} destination{enabledCount === 1 ? '' : 's'}
+            {formatUpdated(project.updatedAt) ? ` · Updated ${formatUpdated(project.updatedAt)}` : ''}
+          </div>
+          {badges ? <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>{badges}</div> : null}
         </div>
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Link to={`/create/${project.id}`} className="btn btn-secondary" style={{ flex: 1, minWidth: 100 }}>
-          Edit
-        </Link>
+        {onEdit ? (
+          <button className="btn btn-secondary" style={{ flex: 1, minWidth: 100 }} onClick={onEdit}>
+            Edit
+          </button>
+        ) : (
+          <Link to={`/create/${project.id}`} className="btn btn-secondary" style={{ flex: 1, minWidth: 100 }}>
+            Edit
+          </Link>
+        )}
         <button className="btn btn-ghost" onClick={handleCopy} disabled={!shareUrl}>
           Copy link
         </button>
+        {extraActions}
         <button className="btn btn-ghost" onClick={handleDelete} aria-label={`Delete ${project.brand.companyName || 'project'}`}>
           Delete
         </button>

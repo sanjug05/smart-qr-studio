@@ -1,6 +1,6 @@
 import { httpDynamicQrService } from './httpDynamicQrService'
 
-export type { DynamicQrService, DynamicQrResolveResult, DynamicQrCreateResult, DynamicQrUpdateResult } from './dynamicQrService'
+export type { DynamicQrService, DynamicQrResolveResult, DynamicQrCreateResult, DynamicQrUpdateResult, DynamicQrClaimResult } from './dynamicQrService'
 export { dynamicQrAuthorizationService } from './dynamicQrAuthorizationService'
 
 // Single shared instance — every consumer imports `dynamicQrService`, not a

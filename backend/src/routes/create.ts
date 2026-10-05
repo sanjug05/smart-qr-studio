@@ -1,4 +1,4 @@
-import type { Ctx } from '../handler'
+import type { RouteCtx } from '../handler'
 import { readJsonBody, jsonResponse, errorResponse } from '../lib/json'
 import { validateDynamicQrContent } from '../lib/validation'
 import { generatePublicId, generateManagementToken, hashToken } from '../lib/ids'
@@ -13,7 +13,10 @@ const MAX_ID_COLLISION_RETRIES = 5
  * header is read here and nowhere else; see lib/entitlements.ts for why it
  * fails closed whenever no override secret is configured.
  */
-export async function createQr(request: Request, { store, config }: Ctx): Promise<Response> {
+export async function createQr(request: Request, { store, config, caller }: RouteCtx): Promise<Response> {
+  // A presented-but-unverifiable ID token is an error, never silently downgraded to an anonymous create.
+  if (caller.kind === 'invalid') return errorResponse('Invalid or expired sign-in. Please sign in again.', 401)
+
   const allowed = canUse('dynamicQr', {
     environment: config.environment,
     configuredDefaultPlan: config.defaultPlan,
@@ -39,7 +42,8 @@ export async function createQr(request: Request, { store, config }: Ctx): Promis
     // `create` never overwrites: an id collision (astronomically unlikely, see lib/ids.ts) is retried, not trusted to never happen.
     const created = await store.create({
       publicId,
-      ownerId: null,
+      // Derived only from the verified ID token — nothing in the request body can set the owner.
+      ownerId: caller.kind === 'user' ? caller.uid : null,
       tokenHash,
       status: 'active',
       content: outcome.content,

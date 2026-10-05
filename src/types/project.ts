@@ -101,8 +101,21 @@ export interface QRProject {
   qrMode?: QrMode
   /** Present only once qrMode === 'dynamic' AND the Dynamic QR has actually been created on the backend. */
   dynamicQr?: DynamicQrInfo
+  /**
+   * Present only on a project that has been saved to the signed-in user's
+   * cloud library (see src/services/cloud). `version` is the cloud revision
+   * this local copy is based on; `syncedAt` is the `updatedAt` it had when it
+   * was last in step with the cloud — a local `updatedAt` later than that
+   * means unsaved changes. Never contains a credential.
+   */
+  cloud?: CloudSyncInfo
   createdAt: string
   updatedAt: string
+}
+
+export interface CloudSyncInfo {
+  version: number
+  syncedAt: string
 }
 
 export const DEFAULT_DESTINATION_ICONS: Record<DestinationType, string> = {

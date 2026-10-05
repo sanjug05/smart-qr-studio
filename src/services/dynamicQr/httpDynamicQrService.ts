@@ -1,6 +1,7 @@
 import type { LandingContent } from '@/types/project'
-import type { DynamicQrCreateResult, DynamicQrResolveResult, DynamicQrService, DynamicQrUpdateResult } from './dynamicQrService'
+import type { DynamicQrClaimResult, DynamicQrCreateResult, DynamicQrResolveResult, DynamicQrService, DynamicQrUpdateResult } from './dynamicQrService'
 import { dynamicQrAuthorizationService } from './dynamicQrAuthorizationService'
+import { authService } from '@/services/auth/authService'
 import { getDynamicQrApiBaseUrl, getDynamicQrTestOverrideSecret, DYNAMIC_QR_TEST_OVERRIDE_HEADER } from './config'
 
 /**
@@ -10,6 +11,24 @@ import { getDynamicQrApiBaseUrl, getDynamicQrTestOverrideSecret, DYNAMIC_QR_TEST
  * `dynamicQrAuthorizationService` — this file never reads or writes a
  * token itself, only asks that service for the headers to send.
  */
+/** Must match ID_TOKEN_HEADER in backend/src/lib/identity.ts. */
+export const ID_TOKEN_HEADER = 'X-Firebase-ID-Token'
+
+/**
+ * The signed-in user's Firebase ID token as a header, or nothing when signed
+ * out / unavailable. Sent on create (so the backend records the owner) and on
+ * every management call (so the owner can manage from any device). A failure
+ * to obtain one never blocks anonymous use — the request just goes without.
+ */
+async function identityHeaders(): Promise<Record<string, string>> {
+  try {
+    const token = await authService.getIdToken()
+    return token ? { [ID_TOKEN_HEADER]: token } : {}
+  } catch {
+    return {}
+  }
+}
+
 class HttpDynamicQrService implements DynamicQrService {
   async resolve(publicId: string): Promise<DynamicQrResolveResult> {
     let res: Response
@@ -45,6 +64,7 @@ class HttpDynamicQrService implements DynamicQrService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(await identityHeaders()),
         ...(overrideSecret ? { [DYNAMIC_QR_TEST_OVERRIDE_HEADER]: overrideSecret } : {})
       },
       body: JSON.stringify(content)
@@ -65,7 +85,7 @@ class HttpDynamicQrService implements DynamicQrService {
   async update(publicId: string, content: LandingContent): Promise<DynamicQrUpdateResult> {
     const res = await fetch(`${getDynamicQrApiBaseUrl()}/v1/qr/${encodeURIComponent(publicId)}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...dynamicQrAuthorizationService.authorizationHeaders(publicId) },
+      headers: { 'Content-Type': 'application/json', ...(await identityHeaders()), ...dynamicQrAuthorizationService.authorizationHeaders(publicId) },
       body: JSON.stringify(content)
     })
     if (!res.ok) {
@@ -79,10 +99,28 @@ class HttpDynamicQrService implements DynamicQrService {
   async setStatus(publicId: string, status: 'active' | 'disabled'): Promise<{ ok: boolean }> {
     const res = await fetch(`${getDynamicQrApiBaseUrl()}/v1/qr/${encodeURIComponent(publicId)}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...dynamicQrAuthorizationService.authorizationHeaders(publicId) },
+      headers: { 'Content-Type': 'application/json', ...(await identityHeaders()), ...dynamicQrAuthorizationService.authorizationHeaders(publicId) },
       body: JSON.stringify({ status })
     })
     return { ok: res.ok }
+  }
+
+  async claim(publicId: string): Promise<DynamicQrClaimResult> {
+    const identity = await identityHeaders()
+    const management = dynamicQrAuthorizationService.authorizationHeaders(publicId)
+    // Both credentials are required by the backend; without either there is nothing to claim.
+    if (!identity[ID_TOKEN_HEADER] || !management.Authorization) return 'skipped'
+    try {
+      const res = await fetch(`${getDynamicQrApiBaseUrl()}/v1/qr/${encodeURIComponent(publicId)}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...identity, ...management }
+      })
+      if (res.ok) return 'claimed'
+      if (res.status === 409) return 'owned-by-other'
+      return 'error'
+    } catch {
+      return 'error'
+    }
   }
 }
 

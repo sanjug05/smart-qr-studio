@@ -6,14 +6,28 @@ import { resolveQr } from './routes/resolve'
 import { createQr } from './routes/create'
 import { updateQr } from './routes/update'
 import { setStatus } from './routes/status'
+import { claimQr } from './routes/claim'
+import { resolveCaller, type Caller, type VerifyIdToken } from './lib/identity'
+import { clientKey, type RateLimiter } from './lib/rateLimit'
 
 export interface Ctx {
   store: QrStore
   config: AppConfig
+  /** Verifies a Firebase ID token to its uid (null if invalid). Absent ⇒ every presented ID token is treated as invalid. */
+  verifyIdToken?: VerifyIdToken
+  /** Optional abuse safeguard; see lib/rateLimit.ts. */
+  limiter?: RateLimiter
 }
+
+/** Per-minute, per-client-address ceilings — generous for real use, a brake on scripted floods. */
+export const RATE_LIMITS = { create: 20, manage: 60, resolve: 600 } as const
+const WINDOW_MS = 60_000
+
+export type RouteCtx = Ctx & { caller: Caller }
 
 const QR_PATH = /^\/v1\/qr\/([^/]+)$/
 const QR_STATUS_PATH = /^\/v1\/qr\/([^/]+)\/status$/
+const QR_CLAIM_PATH = /^\/v1\/qr\/([^/]+)\/claim$/
 
 /**
  * The whole API as a plain `Request → Response` function — no Firebase,
@@ -30,7 +44,11 @@ export function createHandler(ctx: Ctx): (request: Request) => Promise<Response>
     const { pathname } = new URL(request.url)
 
     try {
-      const response = await route(request, pathname, ctx)
+      const limited = rateLimit(request, pathname, ctx)
+      if (limited) return withCors(limited, request, ctx.config)
+
+      const caller = await resolveCaller(request, ctx.verifyIdToken)
+      const response = await route(request, pathname, { ...ctx, caller })
       return withCors(response, request, ctx.config)
     } catch (err) {
       // Log the error message only — never the request (it may carry a management token).
@@ -40,9 +58,24 @@ export function createHandler(ctx: Ctx): (request: Request) => Promise<Response>
   }
 }
 
-async function route(request: Request, pathname: string, ctx: Ctx): Promise<Response> {
+function rateLimit(request: Request, pathname: string, ctx: Ctx): Response | null {
+  if (!ctx.limiter) return null
+  const kind = request.method === 'GET' ? 'resolve' : request.method === 'POST' && pathname === '/v1/qr' ? 'create' : 'manage'
+  const wait = ctx.limiter.hit(`${kind}:${clientKey(request)}`, RATE_LIMITS[kind], WINDOW_MS)
+  if (wait === null) return null
+  const response = errorResponse('Too many requests. Please slow down and try again shortly.', 429)
+  response.headers.set('Retry-After', String(wait))
+  return response
+}
+
+async function route(request: Request, pathname: string, ctx: RouteCtx): Promise<Response> {
   if (request.method === 'POST' && pathname === '/v1/qr') {
     return createQr(request, ctx)
+  }
+
+  const claimMatch = pathname.match(QR_CLAIM_PATH)
+  if (claimMatch && request.method === 'POST') {
+    return claimQr(safeDecode(claimMatch[1]), request, ctx)
   }
 
   const statusMatch = pathname.match(QR_STATUS_PATH)

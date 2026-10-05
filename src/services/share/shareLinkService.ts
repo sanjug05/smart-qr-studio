@@ -1,5 +1,6 @@
 import type { QRProject } from '@/types/project'
 import { buildShareablePayload, encodeSharePayload } from './sharePayload'
+import { getPublicBaseUrl } from '@/services/appUrl'
 
 /**
  * Every "what URL does this QR encode" decision in the app goes through
@@ -32,7 +33,7 @@ const DYNAMIC_TOKEN_PREFIX = 'd.'
 export function getShareUrl(project: QRProject): string {
   const payload = buildShareablePayload(project)
   const token = SHARE_TOKEN_PREFIX + encodeSharePayload(payload)
-  const base = window.location.origin + import.meta.env.BASE_URL
+  const base = getPublicBaseUrl()
   return `${base}#/q/${token}`
 }
 
@@ -42,7 +43,7 @@ export function getShareUrl(project: QRProject): string {
  * consulted fresh on every scan (see src/services/dynamicQr).
  */
 export function getDynamicShareUrl(publicId: string): string {
-  const base = window.location.origin + import.meta.env.BASE_URL
+  const base = getPublicBaseUrl()
   return `${base}#/q/${DYNAMIC_TOKEN_PREFIX}${publicId}`
 }
 

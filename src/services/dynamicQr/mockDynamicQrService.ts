@@ -1,5 +1,5 @@
 import type { LandingContent } from '@/types/project'
-import type { DynamicQrCreateResult, DynamicQrResolveResult, DynamicQrService, DynamicQrUpdateResult } from './dynamicQrService'
+import type { DynamicQrCreateResult, DynamicQrResolveResult, DynamicQrService, DynamicQrUpdateResult, DynamicQrClaimResult } from './dynamicQrService'
 import { dynamicQrAuthorizationService } from './dynamicQrAuthorizationService'
 
 /**
@@ -37,6 +37,10 @@ export class MockDynamicQrService implements DynamicQrService {
     const nextVersion = record.version + 1
     this.records.set(publicId, { ...record, content, version: nextVersion })
     return { ok: true, content, version: nextVersion }
+  }
+
+  async claim(): Promise<DynamicQrClaimResult> {
+    return 'skipped'
   }
 
   async setStatus(publicId: string, status: 'active' | 'disabled'): Promise<{ ok: boolean }> {

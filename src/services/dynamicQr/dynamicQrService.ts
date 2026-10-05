@@ -38,9 +38,18 @@ export interface DynamicQrUpdateResult {
  * dynamicQrAuthorizationService.ts. Implementations reach into that service
  * internally, so callers never handle a management token themselves.
  */
+/**
+ * `claimed` — now (or already) attached to the signed-in account. `skipped` —
+ * nothing to do (not signed in, or this device holds no management token).
+ * `owned-by-other` — the QR already belongs to a different account.
+ */
+export type DynamicQrClaimResult = 'claimed' | 'skipped' | 'owned-by-other' | 'error'
+
 export interface DynamicQrService {
   resolve(publicId: string): Promise<DynamicQrResolveResult>
   create(content: LandingContent): Promise<DynamicQrCreateResult>
   update(publicId: string, content: LandingContent): Promise<DynamicQrUpdateResult>
   setStatus(publicId: string, status: 'active' | 'disabled'): Promise<{ ok: boolean }>
+  /** Attaches an existing Dynamic QR (proved by this device's management token) to the signed-in account. */
+  claim(publicId: string): Promise<DynamicQrClaimResult>
 }

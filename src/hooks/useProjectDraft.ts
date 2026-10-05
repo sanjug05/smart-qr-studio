@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { BrandConfig, Destination, DynamicQrInfo, QRProject, QRStyleConfig, QrDesignConfig, QrMode } from '@/types/project'
+import type { BrandConfig, CloudSyncInfo, Destination, DynamicQrInfo, QRProject, QRStyleConfig, QrDesignConfig, QrMode } from '@/types/project'
 import { createDefaultDesignConfig } from '@/types/project'
 import { projectRepository, createUniqueProject } from '@/services/storage/projectRepository'
 
@@ -53,7 +53,9 @@ export function useProjectDraft(id?: string) {
     window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(async () => {
       try {
-        await projectRepository.save({ ...project, updatedAt: new Date().toISOString() })
+        // `updatedAt` is stamped when the user edits (markDirtyAndSet), not here — re-stamping on every
+        // autosave/open would make a freshly synced project look like it has unsaved changes.
+        await projectRepository.save(project)
         setSaveError(null)
       } catch (err) {
         setSaveError(err instanceof Error ? err.message : 'Could not save this project.')
@@ -64,7 +66,19 @@ export function useProjectDraft(id?: string) {
 
   function markDirtyAndSet(updater: (p: QRProject) => QRProject) {
     dirtyRef.current = true
-    setProject((p) => (p ? updater(p) : p))
+    setProject((p) => (p ? { ...updater(p), updatedAt: new Date().toISOString() } : p))
+  }
+
+  // Cloud sync bookkeeping: records the revision this draft is now based on without counting as an edit.
+  function applyCloudSync(cloud: CloudSyncInfo) {
+    dirtyRef.current = true
+    setProject((p) => (p ? { ...p, cloud } : p))
+  }
+
+  // Swaps the whole draft for another version of the same project (e.g. "use the newer cloud version").
+  function replaceProject(next: QRProject) {
+    dirtyRef.current = true
+    setProject(next)
   }
 
   function updateBrand(patch: Partial<BrandConfig>) {
@@ -105,5 +119,5 @@ export function useProjectDraft(id?: string) {
     markDirtyAndSet((p) => ({ ...p, dynamicQr: info }))
   }
 
-  return { project, ready, saveError, updateBrand, updateDestinations, updateDestination, updateQrStyle, updateDesignConfig, updateQrMode, setDynamicQrInfo }
+  return { project, ready, saveError, applyCloudSync, replaceProject, updateBrand, updateDestinations, updateDestination, updateQrStyle, updateDesignConfig, updateQrMode, setDynamicQrInfo }
 }

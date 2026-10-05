@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useProjectDraft } from '@/hooks/useProjectDraft'
+import { useCloudSave } from '@/hooks/useCloudSave'
+import { useAuth } from '@/hooks/useAuth'
 import StepIndicator from '@/components/wizard/StepIndicator'
 import QrTypeStep from '@/components/wizard/QrTypeStep'
 import BrandStep from '@/components/wizard/BrandStep'
@@ -15,8 +17,10 @@ const TOTAL_STEPS = 5
 export default function CreateQR() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { project, ready, saveError, updateBrand, updateDestinations, updateQrStyle, updateDesignConfig, updateQrMode, setDynamicQrInfo } =
+  const { project, ready, saveError, applyCloudSync, replaceProject, updateBrand, updateDestinations, updateQrStyle, updateDesignConfig, updateQrMode, setDynamicQrInfo } =
     useProjectDraft(id)
+  const cloud = useCloudSave(project, applyCloudSync, replaceProject)
+  const { status: authStatus } = useAuth()
   const [step, setStep] = useState(1)
 
   // react-router keeps this component instance mounted across /create <->
@@ -39,12 +43,62 @@ export default function CreateQR() {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <h1 style={{ margin: 0 }}>Create Smart QR</h1>
-        <button className="btn btn-ghost" onClick={() => navigate('/codes')}>
-          Save &amp; exit
+        <button
+          className="btn btn-ghost"
+          disabled={cloud.saving}
+          onClick={async () => {
+            // Signed in: make sure the cloud copy is current before leaving; stay put (with the reason) if it can't be.
+            if (await cloud.save()) navigate('/codes')
+          }}
+        >
+          {cloud.saving ? 'Saving…' : 'Save & exit'}
         </button>
       </div>
 
       <StepIndicator step={step} />
+
+      {cloud.signedIn ? (
+        <div className="card" style={{ padding: 12, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }} role="status" aria-live="polite">
+          <span style={{ flex: 1, minWidth: 200, fontSize: '0.9rem' }}>
+            {cloud.saveStatus === 'saved'
+              ? `Saved to your account (version ${project.cloud?.version}).`
+              : cloud.saveStatus === 'unsaved'
+                ? 'You have changes that aren’t saved to your account yet.'
+                : 'Not saved to your account yet.'}
+          </span>
+          <button className="btn btn-secondary" disabled={cloud.saving || cloud.saveStatus === 'saved' || cloud.dynamicPending} onClick={() => void cloud.save()}>
+            {cloud.saving ? 'Saving…' : 'Save to my account'}
+          </button>
+        </div>
+      ) : authStatus === 'signedOut' ? (
+        <p className="hint" style={{ marginTop: 0 }}>
+          This QR code is saved on this device only. Sign in with Google above to save it to your account and open it on other devices.
+        </p>
+      ) : null}
+
+      {cloud.error ? (
+        <p className="error card" role="alert" style={{ padding: 12, marginBottom: 16 }}>
+          {cloud.error}
+        </p>
+      ) : null}
+
+      {cloud.conflict ? (
+        <div className="card" role="alert" style={{ padding: 16, marginBottom: 16 }}>
+          <strong>A newer version of this QR code was saved from another device.</strong>
+          <p style={{ margin: '8px 0 12px' }}>Choose which one to keep. Your edits on this device are not lost until you choose.</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" onClick={() => void cloud.useCloudVersion()}>
+              Use the newer version (discard my edits)
+            </button>
+            <button className="btn btn-secondary" onClick={() => void cloud.overwriteCloud()}>
+              Keep my version (overwrite the newer one)
+            </button>
+            <button className="btn btn-ghost" onClick={cloud.dismissConflict}>
+              Decide later
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {saveError ? (
         <p className="error card" role="alert" style={{ padding: 12, marginBottom: 16 }}>
@@ -69,8 +123,14 @@ export default function CreateQR() {
                 Next
               </button>
             ) : (
-              <button className="btn btn-accent" disabled={!hasValidDestination} onClick={() => navigate('/codes')}>
-                Done — go to My QR Codes
+              <button
+                className="btn btn-accent"
+                disabled={!hasValidDestination || cloud.saving}
+                onClick={async () => {
+                  if (await cloud.save()) navigate('/codes')
+                }}
+              >
+                {cloud.saving ? 'Saving…' : 'Done — go to My QR Codes'}
               </button>
             )}
           </div>

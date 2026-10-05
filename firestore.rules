@@ -1,11 +1,72 @@
 rules_version = '2';
 
-// Dynamic QR records are read and written ONLY by the Cloud Function API
-// (firebase-admin bypasses these rules). Clients — including anyone who
-// finds the Firebase web config — get no direct access at all, so nothing
-// can bypass the API's validation or management-token authorization.
+// Two kinds of data live here, with very different access:
+//
+// 1. dynamic_qr/{publicId} — Dynamic QR records. Read and written ONLY by
+//    the Cloud Function API (firebase-admin bypasses these rules). Clients
+//    get no direct access at all, so nothing can bypass the API's
+//    validation or management-token / owner authorization.
+//
+// 2. users/{uid}/projects/{projectId} — a signed-in user's cloud QR
+//    library (project *configuration* only: never QR images, never a
+//    management token). A user can read and write ONLY under their own
+//    uid; the path, not any client-supplied field, decides ownership.
+//
+// Everything else is denied by default.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Shape + size guard for a cloud project document. Bounded fields keep
+    // a client from using its own library as free bulk storage.
+    function validProject(data, pid) {
+      return data.keys().hasOnly([
+               'schemaVersion', 'id', 'slug', 'qrMode', 'brand', 'destinations', 'qrStyle',
+               'designConfig', 'dynamicQr', 'createdAt', 'updatedAt', 'version', 'syncedAt', 'imagesOmitted'
+             ])
+          && data.keys().hasAll(['schemaVersion', 'id', 'slug', 'brand', 'destinations', 'qrStyle', 'createdAt', 'updatedAt', 'version'])
+          && data.schemaVersion == 1
+          && data.id is string && data.id == pid
+          && data.slug is string && data.slug.size() <= 64
+          && (!('qrMode' in data) || data.qrMode in ['static', 'dynamic'])
+          && data.brand is map
+          && data.brand.companyName is string && data.brand.companyName.size() <= 120
+          && (!('tagline' in data.brand) || (data.brand.tagline is string && data.brand.tagline.size() <= 160))
+          && (!('logoDataUrl' in data.brand) || (data.brand.logoDataUrl is string && data.brand.logoDataUrl.size() <= 300000))
+          && data.destinations is list && data.destinations.size() <= 5
+          && data.qrStyle is map
+          && (!('brandingLogoDataUrl' in data.qrStyle) || (data.qrStyle.brandingLogoDataUrl is string && data.qrStyle.brandingLogoDataUrl.size() <= 300000))
+          && (!('designConfig' in data) || data.designConfig is map)
+          && (!('dynamicQr' in data) || (data.dynamicQr is map && data.dynamicQr.publicId is string && data.dynamicQr.publicId.size() <= 64
+                                         && data.keys().hasAny(['qrMode']) && data.qrMode == 'dynamic'))
+          && data.createdAt is int && data.createdAt > 0
+          && data.updatedAt is int && data.updatedAt > 0
+          && data.version is int && data.version >= 1;
+    }
+
+    match /users/{uid}/projects/{pid} {
+      allow read: if isOwner(uid);
+
+      // First write of a project: version starts at 1.
+      allow create: if isOwner(uid) && validProject(request.resource.data, pid) && request.resource.data.version == 1;
+
+      // Every later write must be exactly the next version (optimistic
+      // concurrency, enforced here and not just in the app: a stale device
+      // that read an older version cannot silently overwrite newer data),
+      // and the identity/creation fields can never change.
+      allow update: if isOwner(uid)
+                    && validProject(request.resource.data, pid)
+                    && request.resource.data.version == resource.data.version + 1
+                    && request.resource.data.id == resource.data.id
+                    && request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if isOwner(uid);
+    }
+
+    // Deny-by-default for everything else, including dynamic_qr/* (Admin SDK only).
     match /{document=**} {
       allow read, write: if false;
     }

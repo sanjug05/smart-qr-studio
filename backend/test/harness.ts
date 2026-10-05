@@ -1,5 +1,6 @@
 import { createHandler } from '../src/handler'
 import { createMemoryStore } from '../src/memoryStore'
+import type { RateLimiter } from '../src/lib/rateLimit'
 
 /**
  * Test harness: runs the real handler against an in-memory store, with a
@@ -16,10 +17,18 @@ export const env: {
 
 export const store = createMemoryStore()
 
+/** Fake identity provider: ID token string → uid. Anything not listed is an invalid token. */
+export const idTokens: Record<string, string> = { 'id-token-A': 'uid-A', 'id-token-B': 'uid-B' }
+
+/** Set to a RateLimiter to exercise 429s; undefined (default) leaves limiting off, as most tests need. */
+export const limiterRef: { current?: RateLimiter } = {}
+
 export const SELF = {
   fetch(input: string, init?: RequestInit): Promise<Response> {
     const handler = createHandler({
       store,
+      verifyIdToken: async (t) => idTokens[t] ?? null,
+      limiter: limiterRef.current,
       config: {
         environment: env.ENVIRONMENT as 'development' | 'staging' | 'production',
         allowedOrigins: env.ALLOWED_ORIGINS,

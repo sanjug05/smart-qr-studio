@@ -11,9 +11,12 @@
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "cap:sync": "cap sync"
+    "cap:sync": "cap sync",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-smart-qr-rules \"vitest run --config vitest.rules.config.ts\"",
+    "test:rules:remote": "node scripts/run-rules-cases-remote.cjs"
   },
   "dependencies": {
+    "firebase": "11.10.0",
     "jsqr": "^1.4.0",
     "qr-code-styling": "^1.9.2",
     "react": "^18.3.1",
@@ -24,6 +27,7 @@
     "@capacitor/cli": "^6.1.2",
     "@capacitor/core": "^6.1.2",
     "@eslint/js": "^9.39.5",
+    "@firebase/rules-unit-testing": "4.0.1",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

@@ -1,4 +1,4 @@
-import type { Ctx } from '../handler'
+import type { RouteCtx } from '../handler'
 import { readJsonBody, jsonResponse, errorResponse } from '../lib/json'
 import { validateDynamicQrContent } from '../lib/validation'
 import { authorizeManagementRequest } from '../lib/auth'
@@ -12,12 +12,12 @@ import { authorizeManagementRequest } from '../lib/auth'
  * reader sees either the old document or the new one, never a torn write.
  * `publicId` and the QR artwork are never touched here.
  */
-export async function updateQr(publicId: string, request: Request, { store }: Ctx): Promise<Response> {
+export async function updateQr(publicId: string, request: Request, { store, caller }: RouteCtx): Promise<Response> {
   // Parsed before opening a transaction: nothing here depends on stored state.
   const body = await readJsonBody(request)
 
   const response = await store.transact<Response>(publicId, async (record) => {
-    const auth = await authorizeManagementRequest(request, record)
+    const auth = await authorizeManagementRequest(request, record, caller)
     if (!auth.authorized) {
       return { result: errorResponse(auth.reason === 'missing_token' ? 'A management token is required.' : 'Invalid management token.', 401) }
     }

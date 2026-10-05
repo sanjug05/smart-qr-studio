@@ -1,4 +1,4 @@
-import type { Ctx } from '../handler'
+import type { RouteCtx } from '../handler'
 import { readJsonBody, jsonResponse, errorResponse } from '../lib/json'
 import { authorizeManagementRequest } from '../lib/auth'
 
@@ -9,12 +9,12 @@ const VALID_STATUSES = new Set(['active', 'disabled'])
  * deleting the document (see README → "Disabled QR": a removed publicId
  * must never later be reused for different content).
  */
-export async function setStatus(publicId: string, request: Request, { store }: Ctx): Promise<Response> {
+export async function setStatus(publicId: string, request: Request, { store, caller }: RouteCtx): Promise<Response> {
   const body = await readJsonBody(request)
   const status = body && typeof body === 'object' ? (body as Record<string, unknown>).status : null
 
   const response = await store.transact<Response>(publicId, async (record) => {
-    const auth = await authorizeManagementRequest(request, record)
+    const auth = await authorizeManagementRequest(request, record, caller)
     if (!auth.authorized) {
       return { result: errorResponse(auth.reason === 'missing_token' ? 'A management token is required.' : 'Invalid management token.', 401) }
     }

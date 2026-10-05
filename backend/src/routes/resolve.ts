@@ -1,4 +1,4 @@
-import type { Ctx } from '../handler'
+import type { RouteCtx } from '../handler'
 import { jsonResponse, errorResponse } from '../lib/json'
 
 /**
@@ -7,7 +7,7 @@ import { jsonResponse, errorResponse } from '../lib/json'
  * whole point (a scanner has no credentials). Editing is a completely
  * separate, authorized surface — see routes/update.ts and routes/status.ts.
  */
-export async function resolveQr(publicId: string, { store }: Ctx): Promise<Response> {
+export async function resolveQr(publicId: string, { store }: RouteCtx): Promise<Response> {
   const record = await store.get(publicId)
   if (!record) {
     return errorResponse('QR code not found.', 404)

@@ -1,5 +1,6 @@
 import type { AppConfig } from '../types'
 import { DYNAMIC_QR_TEST_OVERRIDE_HEADER } from './entitlements'
+import { ID_TOKEN_HEADER } from './identity'
 
 /**
  * Config-driven CORS allowlist (see README → "CORS"). Origins come from the
@@ -28,7 +29,7 @@ function corsHeadersFor(request: Request, config: AppConfig): Record<string, str
   const headers: Record<string, string> = {
     'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, OPTIONS',
-    'Access-Control-Allow-Headers': `Content-Type, Authorization, ${DYNAMIC_QR_TEST_OVERRIDE_HEADER}`,
+    'Access-Control-Allow-Headers': `Content-Type, Authorization, ${ID_TOKEN_HEADER}, ${DYNAMIC_QR_TEST_OVERRIDE_HEADER}`,
     'Access-Control-Max-Age': '86400'
   }
   if (origin && allowed.includes(origin)) {

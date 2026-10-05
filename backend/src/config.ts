@@ -16,7 +16,7 @@ import type { AppConfig } from './types'
  */
 const ENVIRONMENT = defineString('ENVIRONMENT', { default: 'production' })
 const DEFAULT_PLAN = defineString('DEFAULT_PLAN', { default: 'business' })
-const ALLOWED_ORIGINS = defineString('ALLOWED_ORIGINS', { default: 'https://sanjug05.github.io,http://localhost:5173' })
+const ALLOWED_ORIGINS = defineString('ALLOWED_ORIGINS', { default: 'https://sanjugupta.com,https://sanjug05.github.io,http://localhost:5173' })
 
 export function loadConfig(): AppConfig {
   const environment = ENVIRONMENT.value()

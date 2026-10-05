@@ -8,6 +8,15 @@ import { VitePWA } from 'vite-plugin-pwa'
 // Set VITE_BASE_PATH="/repo-name/" in CI or a local .env file.
 const basePath = process.env.VITE_BASE_PATH || '/'
 
+// The PWA's service-worker/manifest scope. Defaults to the base path. The
+// sanjugupta.com deployment sets VITE_PWA_SCOPE=/qr (no trailing slash):
+// that host redirects /qr/ to /qr, and a '/qr/' scope would leave the page
+// the user actually lands on outside the service worker's control. It is
+// still strictly under /qr — never the site root, never /learning. A scope
+// broader than the worker's directory needs the Service-Worker-Allowed
+// response header, which that host's config provides for /qr/sw.js.
+const pwaScope = process.env.VITE_PWA_SCOPE || basePath
+
 export default defineConfig({
   base: basePath,
   resolve: {
@@ -25,6 +34,7 @@ export default defineConfig({
       // needs injecting into index.html.
       registerType: 'prompt',
       injectRegister: false,
+      scope: pwaScope,
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'Smart QR Studio',
@@ -38,7 +48,7 @@ export default defineConfig({
         background_color: '#f6f6f8',
         display: 'standalone',
         start_url: basePath,
-        scope: basePath,
+        scope: pwaScope,
         icons: [
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -48,7 +58,10 @@ export default defineConfig({
       workbox: {
         // The landing page must resolve smart-QR slugs client-side even when
         // offline/cached; keep navigation fallback but never cache-poison /q/ data.
-        navigateFallbackDenylist: [/^\/api\//]
+        // Never serve the app shell for backend or auth-handler paths. There is deliberately no
+        // runtimeCaching rule: Dynamic QR API responses and Firebase/Firestore traffic (all
+        // cross-origin) are never cached by the service worker.
+        navigateFallbackDenylist: [/^\/api\//, /^\/__\//]
       }
     })
   ],
