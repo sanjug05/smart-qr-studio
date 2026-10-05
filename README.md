@@ -20,6 +20,7 @@ Smart QR Studio itself is not branded to any company. **AIS** is only a sample b
 - **Internal scan validation** — every generated QR is decoded by an independent decoder (jsQR) before being called "verified," with a visible badge and automatic fallback if verification fails.
 - **Premium, mobile-first customer landing page** — brand identity, tagline, and destination cards; works standalone at `/#/q/...` with no dependency on the builder UI, for both QR types.
 - **5-step builder wizard** (QR Type → Brand → Destinations → QR Style → Preview) with a persistent live QR preview and a full "preview the customer page" phone-frame view.
+- **Google sign-in and a cloud QR library (optional)** — sign in to save QR codes to your account and open them on any device; anonymous use stays fully local and needs no account. See [Accounts & cloud library](#accounts--cloud-library).
 - **Local project storage** with JSON export/import for backup, and a clear-all-data control (Settings).
 - **Provider-neutral entitlements** — Dynamic QR is gated behind a `canUse('dynamicQr')` check, not billing-specific code; see [Entitlements](#entitlements).
 - **PWA-ready** (installable, offline app-shell caching) and **Capacitor-ready** for later Android/iOS packaging without an architecture rewrite.
@@ -27,8 +28,8 @@ Smart QR Studio itself is not branded to any company. **AIS** is only a sample b
 
 ## Technology stack
 
-- **React 18 + TypeScript + Vite** — fast dev server, small optimized production build. Deployed as a static site (GitHub Pages) — unchanged by Dynamic QR.
-- **react-router-dom (HashRouter)** — client-side routing that works on GitHub Pages with zero server-side rewrite rules, and survives a hard refresh on `/#/q/...` for either QR type.
+- **React 18 + TypeScript + Vite** — fast dev server, small optimized production build. Served as a static app under `/qr/` on the existing sanjugupta.com Firebase Hosting site — see [Hosting architecture](#hosting-architecture-sanjuguptacomqr).
+- **react-router-dom (HashRouter)** — client-side routing that needs zero server-side rewrite rules, and survives a hard refresh on `/qr/#/q/...` for either QR type.
 - **qr-code-styling** — QR rendering with per-module styling, SVG/PNG/canvas export, and image (logo) embedding with configurable error correction.
 - **jsQR** — independent, pure-JS QR decoder used only for the internal scan-reliability check (see below); never used for anything user-facing.
 - **vite-plugin-pwa** — manifest + service worker generation. No `runtimeCaching` rule exists for the Dynamic QR API — every resolution request always hits the network (see [Caching](#caching)).
@@ -220,6 +221,21 @@ Two small pieces of logic exist independently on both sides rather than as one s
 
 **Why not one shared package:** the frontend (Vite/browser) and backend (Firebase Cloud Functions) are two independently deployed projects with separate `package.json`s, separate `tsconfig.json`s, and no monorepo tooling (no shared workspace, no build-order coordination) connecting them. Introducing a shared package for roughly 30 stable, rarely-changing lines would mean either a path-based cross-project import (coupling two independent deploy pipelines' module resolution together) or an actual monorepo/workspace restructuring — real ongoing complexity for a small, low-churn amount of duplication. This was evaluated and deliberately rejected as disproportionate; each copy is small enough to review side-by-side by hand, and both are covered by their own project's tests, so drift would surface as a test failure rather than silently.
 
+## Accounts & cloud library
+
+Signing in is **optional**. Anonymous visitors can create Static and Dynamic QR codes and use every export exactly as before (their projects live in this browser). Signing in with Google adds a cloud library so the same QR codes open on every device you use.
+
+- **Authentication** — Firebase Authentication, Google provider only (`src/services/auth`). The Firebase SDK loads lazily, only on studio screens, so a customer scanning a QR never downloads it and never needs to sign in. Sessions persist and restore automatically; sign-in uses a popup and falls back to a redirect where popups are blocked. No Google access token is ever read or stored by the app.
+- **Cloud data** — `users/{uid}/projects/{projectId}` holds project *configuration* only: QR type, brand, destinations, style, Smart QR design, the Dynamic QR `publicId`, timestamps and a revision number. It never holds rendered QR images (PNG/SVG are regenerated in the browser), management tokens, or an owner field (ownership is the document path). Logos/icons are synced only within a ~250 KB budget; a larger one is skipped and flagged rather than bloating the database.
+- **Explicit saves, no polling** — cloud writes happen only on "Save to my account", "Save & exit" or "Done" (the on-device copy autosaves as the editing buffer). The library is read once per page load (with a Refresh button) — there are no real-time listeners, and Firestore's browser cache is in-memory only, so signed-in data is not persisted to disk.
+- **Security rules** (`firestore.rules`) — a user can read and write only under their own `uid`; documents are shape- and size-validated; every update must be exactly `previous version + 1` and `id`/`createdAt` are immutable; `dynamic_qr/*` and everything else is denied to clients. The rules are tested two ways from one case list (`rules-test/cases.cjs`): on the emulator in CI (`npm run test:rules`) and against Google's hosted rules evaluator (`npm run test:rules:remote`, no Java needed). 33 cases cover owner access, user B vs user A (read/create/update/delete), unauthenticated access, forged fields, version skew and deny-by-default.
+- **Conflicts** — each project carries `version`/`updatedAt`. A device that tries to save over a newer cloud revision is told so and chooses: use the newer version, or deliberately overwrite it. Nothing is silently overwritten.
+- **Existing local QR codes** — after signing in, an "On this device only" list and a "Save your existing QR codes to your account" prompt (Save All / Choose QR Codes / Skip) appear. Nothing is uploaded or deleted unless you choose, and already-saved projects are never duplicated.
+- **Dynamic QR ownership** — a Dynamic QR created while signed in is owned by the verified account; one created anonymously is attached to the account (proved by the device's management token) when saved. The backend verifies the Firebase ID token server-side and takes the owner only from that verified uid. A QR can be managed by its verified owner (from any device) **or** by its management token; the `publicId` alone never authorizes anything, and scanning a QR needs no sign-in.
+- **Cost control** — metadata only (no image storage, no Cloud Storage bucket), explicit writes, bounded reads (one library read capped at 200 documents), field-size limits in the rules, `maxInstances: 10` on the function and a per-client rate limit (429) on Dynamic QR creation/management. Expected cost drivers: Firestore document reads/writes (a few per save and per library open), Cloud Functions invocations for Dynamic QR create/resolve/update, and Cloud Run/Functions egress — all within the free tier at small scale; set a Google Cloud budget alert on the project.
+
+Sign-in needs the Google provider enabled in the Firebase console and the site listed under **Authentication → Settings → Authorized domains** (`sanjugupta.com`).
+
 ## How QR branding works
 
 A common but unreliable idea is to reshape a QR code's own data/timing modules into letterforms. Standard QR decoders are not guaranteed to tolerate that, and it actively fights the code's own error-correction math. **Smart QR Studio does not do this — for either QR type.**
@@ -288,28 +304,39 @@ npm run test        # Vitest against the real handler + an in-memory store — n
 **Frontend** (see [`.env.example`](.env.example)):
 
 ```bash
-VITE_BASE_PATH=/smart-qr-studio/                    # subpath for a GitHub Pages *project* site; "/" for a custom domain or user/org site
+VITE_BASE_PATH=/qr/                                  # sub-path the app is served from (sanjugupta.com/qr); "/" for a root deployment
 VITE_DYNAMIC_QR_API_BASE_URL=https://<function-host>       # the Dynamic QR API origin (Firebase Function); no default; production builds require a public https URL; set as the DYNAMIC_QR_API_BASE_URL repo variable in CI
+VITE_PWA_SCOPE=/qr                                   # service-worker/manifest scope (see Hosting architecture)
+VITE_PUBLIC_BASE_URL=https://sanjugupta.com/qr/      # canonical origin QR links are built on
+VITE_FIREBASE_API_KEY= / _AUTH_DOMAIN= / _PROJECT_ID= / _APP_ID=   # Firebase web app config (public identifiers, from `firebase apps:sdkconfig web`); absent => cloud features off
 ```
 
-Neither is a secret. The frontend has no secrets of its own.
+None of these is a secret (Firebase web config values are public client identifiers; access is enforced by Firestore rules and Auth authorized domains). The frontend has no secrets of its own.
 
 **Backend** — no runtime secrets exist; configuration (CORS allowlist, environment name, default plan) are plain Cloud Functions params in `backend/src/config.ts`. CI authenticates to Firebase with a `FIREBASE_SERVICE_ACCOUNT` GitHub secret (a service-account JSON key — never committed). Never commit a real secret.
 
 ## Deploying
 
-### Frontend — GitHub Pages
+### Hosting architecture (sanjugupta.com/qr)
 
-A ready-to-use workflow lives at [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). It builds on every push to `main` and deploys via GitHub's native Pages actions (no personal token needed). **Unchanged by Dynamic QR** — the frontend remains a static site regardless of which QR type a project uses.
+Smart QR Studio is served at **`https://sanjugupta.com/qr/`**. `sanjugupta.com` is one Firebase Hosting site (`sanjugupta-web` in the `ais-channel-os` Firebase project) whose single release also contains the root website, `/hq` and `/learning`, built and deployed elsewhere. A normal `firebase deploy` publishes exactly the folder it is given and would **replace that whole release**, so this app is never deployed that way. Instead `scripts/deploy-qr-hosting.mjs` builds a *new Hosting version* from (the live version's files and config) + (this app's files under `/qr/`) + (the `/qr` header rules), verifies that every pre-existing file is present and unchanged, and only then releases it — to a preview channel first, or straight to `live`. Rolling back is re-releasing the previous version (printed by the script).
 
-1. Push this repository to GitHub.
-2. In the repo's **Settings → Pages**, set "Source" to **GitHub Actions**.
-3. Push to `main` (or run the workflow manually from the Actions tab).
-4. The site is published at `https://<your-username>.github.io/<repo-name>/`.
+- Canonical URLs: Dynamic `https://sanjugupta.com/qr/#/q/d.<publicId>`, Static `https://sanjugupta.com/qr/#/q/p.<payload>`. The host removes trailing slashes, so `/qr/` answers with a redirect to `/qr`; the `#/…` fragment is preserved. QR links are built from `VITE_PUBLIC_BASE_URL`, so they stay canonical wherever the app is opened.
+- PWA scope is `/qr` (manifest and service worker), never the site root or `/learning`; `/qr/sw.js` is served with `Service-Worker-Allowed: /qr`. No `runtimeCaching` exists, so API and Firebase responses are never cached.
+- The `/qr` pages get their own Content-Security-Policy (own assets, Firebase Auth/Firestore, the API function); every other path keeps its existing headers.
+- **Caveat:** whoever next deploys the root site from its own repository replaces the release and removes `/qr` (and `/learning`) unless their build includes them — re-run this script (or the `deploy-qr.yml` workflow) afterwards. The durable fix is to merge this app's `dist/` into that site's build as `/qr/`, the way `/hq` is merged today.
 
-The workflow sets `VITE_BASE_PATH` to `/<repo-name>/` automatically. If you deploy to a **custom domain** instead, edit the workflow to set `VITE_BASE_PATH=/` (or remove the env line, since `/` is the default). Set `VITE_DYNAMIC_QR_API_BASE_URL` to wherever the backend is actually deployed (see below) before building for production.
+CI (`.github/workflows/deploy-qr.yml`) runs the checks, builds with public repository **variables** (`DYNAMIC_QR_API_BASE_URL`, `FIREBASE_WEB_API_KEY`, `FIREBASE_WEB_AUTH_DOMAIN`, `FIREBASE_WEB_PROJECT_ID`, `FIREBASE_WEB_APP_ID`), scans the bundle (no loopback or Cloudflare URL, PWA scope `/qr`, no runtime caching) and publishes using the `QR_HOSTING_SERVICE_ACCOUNT` secret — a service-account key with *Firebase Hosting Admin* on the project that owns the site. The old GitHub Pages deployment is retired; GitHub remains the source repository and CI system.
 
-Because routing uses `HashRouter`, there is no need for a `404.html` SPA-redirect trick — every route, including `/#/q/...`, is just a URL fragment the static host never sees, so a hard refresh or a shared deep link always resolves correctly, for both QR types.
+Manual deploy with your own `firebase login` (preview first, then live):
+
+```bash
+npm run build                                   # with the production settings in .env.production.local
+node scripts/deploy-qr-hosting.mjs --channel qr-preview     # inspect the printed preview URL
+node scripts/deploy-qr-hosting.mjs --channel live
+```
+
+Because routing uses `HashRouter`, no SPA-rewrite rules are needed — every route, including `/qr/#/q/...`, is a URL fragment the host never sees.
 
 ### Backend — Firebase Cloud Functions + Firestore
 
@@ -339,7 +366,7 @@ npx cap sync
 npx cap open android   # or: npx cap open ios
 ```
 
-**Base path matters here.** The GitHub Pages build sets `VITE_BASE_PATH=/<repo-name>/` so assets resolve under a project-site subpath. Capacitor serves the bundle from its own local origin (`https://localhost` on Android per `capacitor.config.ts`'s `androidScheme`), not a GitHub Pages subpath — building for Capacitor with a stale `/<repo-name>/` base would 404 every asset. Build with `VITE_BASE_PATH` unset (or explicitly `/`) before `npx cap sync`. `VITE_DYNAMIC_QR_API_BASE_URL` should point at the real deployed backend, not localhost, for any build that will run outside your dev machine.
+**Base path matters here.** The web build sets `VITE_BASE_PATH=/qr/` so assets resolve under the `/qr/` sub-path. Capacitor serves the bundle from its own local origin (`https://localhost` on Android per `capacitor.config.ts`'s `androidScheme`), not a web sub-path — building for Capacitor with a stale `/qr/` base would 404 every asset. Build with `VITE_BASE_PATH` unset (or explicitly `/`) before `npx cap sync`. `VITE_DYNAMIC_QR_API_BASE_URL` should point at the real deployed backend, not localhost, for any build that will run outside your dev machine.
 
 Three things worth doing at that point (not needed for the web build):
 - Swap `localStorage` in `src/services/storage/projectRepository.ts` (and `dynamicQrAuthorizationService.ts`'s token storage) for `@capacitor/preferences` — same interfaces, only those files change.

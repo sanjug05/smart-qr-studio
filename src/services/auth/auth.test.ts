@@ -135,6 +135,8 @@ describe('describeAuthError', () => {
     expect(describeAuthError('auth/popup-blocked')).toMatch(/pop-ups/)
     expect(describeAuthError('auth/unauthorized-domain')).toMatch(/authorised/)
     expect(describeAuthError('auth/operation-not-allowed')).toMatch(/enabled/)
+    expect(describeAuthError('auth/configuration-not-found')).toMatch(/enabled/)
+    expect(describeAuthError('auth/invalid-api-key')).toMatch(/configured/)
     expect(describeAuthError('auth/network-request-failed')).toMatch(/connection/)
     expect(describeAuthError('auth/something-new')).toBe('Sign-in failed. Please try again.')
   })

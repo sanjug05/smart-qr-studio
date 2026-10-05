@@ -113,7 +113,8 @@ class HttpDynamicQrService implements DynamicQrService {
     try {
       const res = await fetch(`${getDynamicQrApiBaseUrl()}/v1/qr/${encodeURIComponent(publicId)}/claim`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...identity, ...management }
+        headers: { 'Content-Type': 'application/json', ...identity, ...management },
+        body: '{}'
       })
       if (res.ok) return 'claimed'
       if (res.status === 409) return 'owned-by-other'

@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main] # main is covered by the deploy workflows, which run the same checks first
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - name: Production build (same settings as the deploy)
+        env:
+          VITE_BASE_PATH: /qr/
+          VITE_PWA_SCOPE: /qr
+          VITE_PUBLIC_BASE_URL: https://sanjugupta.com/qr/
+          VITE_DEFAULT_PLAN: business
+          VITE_DYNAMIC_QR_API_BASE_URL: https://example-api.invalid
+        run: npm run build
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  firestore-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4 # the Firestore emulator needs a JDK 21+
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npx --yes firebase-tools@15 --version
+      - name: Firestore security rules (emulator)
+        run: npx --yes firebase-tools@15 emulators:exec --only firestore --project demo-smart-qr-rules "npx vitest run --config vitest.rules.config.ts"

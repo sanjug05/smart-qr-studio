@@ -11,7 +11,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['src/test/setup.ts'],
     // On Windows, parallel workers race on the temp file Vitest stages for the
     // shared setup module ("UNKNOWN: unknown error, open …"), which drops whole test

@@ -1,0 +1,111 @@
+name: Deploy Smart QR Studio (sanjugupta.com/qr)
+
+# Builds the app and publishes it under /qr on the existing sanjugupta.com
+# Firebase Hosting site WITHOUT touching anything else on that site (the root
+# website, /hq and /learning are deployed elsewhere). See
+# scripts/deploy-qr-hosting.mjs for how: it builds a new Hosting version from
+# the live version's files plus this app's /qr files, verifies nothing else
+# changed, and only then releases it. It never runs `firebase deploy`, which
+# would replace the whole site.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/deploy-qr-hosting.mjs"
+      - ".github/workflows/deploy-qr.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-qr
+  cancel-in-progress: false
+
+env:
+  HOSTING_SITE: sanjugupta-web
+  HOSTING_PROJECT: ais-channel-os
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+      # Public build-time settings live in repository *variables* (none of them is a secret).
+      - name: Check configuration
+        env:
+          API_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
+          FB_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+          FB_AUTH_DOMAIN: ${{ vars.FIREBASE_WEB_AUTH_DOMAIN }}
+          FB_PROJECT_ID: ${{ vars.FIREBASE_WEB_PROJECT_ID }}
+          FB_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+          HOSTING_SA: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
+        run: |
+          fail() { echo "::error title=$1::$2"; exit 1; }
+          [ -n "$API_URL" ] || fail "Missing DYNAMIC_QR_API_BASE_URL" "Set the repository variable DYNAMIC_QR_API_BASE_URL to the Firebase Function URL (https only)."
+          case "$API_URL" in
+            https://*) ;;
+            *) fail "Invalid DYNAMIC_QR_API_BASE_URL" "Must start with https://" ;;
+          esac
+          case "$API_URL" in
+            *localhost*|*127.0.0.1*|*0.0.0.0*|*'[::1]'*|*cloudflare*|*workers.dev*) fail "Invalid DYNAMIC_QR_API_BASE_URL" "Must be the public Firebase endpoint, not localhost or a Cloudflare URL." ;;
+          esac
+          for v in FB_API_KEY FB_AUTH_DOMAIN FB_PROJECT_ID FB_APP_ID; do
+            [ -n "${!v}" ] || fail "Missing Firebase web config" "Set the repository variables FIREBASE_WEB_API_KEY, FIREBASE_WEB_AUTH_DOMAIN, FIREBASE_WEB_PROJECT_ID and FIREBASE_WEB_APP_ID (from: firebase apps:sdkconfig web)."
+          done
+          [ -n "$HOSTING_SA" ] || fail "Missing QR_HOSTING_SERVICE_ACCOUNT" "Add a repository secret QR_HOSTING_SERVICE_ACCOUNT: a service-account JSON key with the 'Firebase Hosting Admin' role on project ${HOSTING_PROJECT}."
+
+      - name: Build
+        env:
+          VITE_BASE_PATH: /qr/
+          VITE_PWA_SCOPE: /qr
+          VITE_PUBLIC_BASE_URL: https://sanjugupta.com/qr/
+          # The product currently operates at Business level; keep in step with DEFAULT_PLAN in backend/src/config.ts.
+          VITE_DEFAULT_PLAN: business
+          VITE_DYNAMIC_QR_API_BASE_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
+          VITE_FIREBASE_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.FIREBASE_WEB_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_WEB_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+        run: npm run build
+
+      - name: Check the build is safe to publish
+        env:
+          API_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
+        run: |
+          # The real API endpoint must be in the bundle; no loopback API URL, no Cloudflare reference.
+          grep -rlF "$API_URL" dist/assets | head -1 | grep -q . || { echo "::error::The API URL is not in the built bundle."; exit 1; }
+          if grep -rhoE "https?://(127\.0\.0\.1|0\.0\.0\.0|localhost:[0-9]+)[^\"' ]*" dist/assets --include=*.js | grep -q .; then echo "::error::A loopback URL is in the bundle."; exit 1; fi
+          if grep -rliE "cloudflare|workers\.dev" dist --include=*.js --include=*.html | grep -q .; then echo "::error::A Cloudflare reference is in the bundle."; exit 1; fi
+          grep -q '"scope":"/qr"' dist/manifest.webmanifest || { echo "::error::PWA scope is not /qr."; exit 1; }
+          ! grep -q "runtimeCaching" dist/sw.js || { echo "::error::The service worker must not use runtime caching."; exit 1; }
+
+      - uses: google-github-actions/auth@v2
+        id: auth
+        with:
+          credentials_json: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+
+      - name: Publish under /qr (live)
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: node scripts/deploy-qr-hosting.mjs --site "$HOSTING_SITE" --project "$HOSTING_PROJECT" --dist dist --channel live --message "Smart QR Studio ${GITHUB_SHA::7}"

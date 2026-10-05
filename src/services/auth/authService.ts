@@ -53,7 +53,11 @@ export function describeAuthError(code: string): string | null {
     case 'auth/unauthorized-domain':
       return "This website isn't authorised for Google sign-in yet."
     case 'auth/operation-not-allowed':
+    case 'auth/configuration-not-found':
       return "Google sign-in isn't enabled for this app yet."
+    case 'auth/invalid-api-key':
+    case 'auth/api-key-not-valid.-please-pass-a-valid-api-key.':
+      return "Sign-in isn't configured correctly for this site."
     case 'auth/network-request-failed':
       return 'Could not reach Google. Check your connection and try again.'
     case 'auth/too-many-requests':
