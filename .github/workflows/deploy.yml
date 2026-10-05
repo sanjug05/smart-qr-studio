@@ -57,7 +57,7 @@ jobs:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
           # The product currently operates at Business level (no plan tiers
           # sold yet). Keep in step with DEFAULT_PLAN in
-          # backend/wrangler.toml [env.production]; remove to fall back to
+          # DEFAULT_PLAN in backend/src/config.ts; remove to fall back to
           # the safe default (free). See src/services/entitlements/.
           VITE_DEFAULT_PLAN: business
           VITE_DYNAMIC_QR_API_BASE_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}

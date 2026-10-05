@@ -32,7 +32,7 @@ Smart QR Studio itself is not branded to any company. **AIS** is only a sample b
 - **qr-code-styling** — QR rendering with per-module styling, SVG/PNG/canvas export, and image (logo) embedding with configurable error correction.
 - **jsQR** — independent, pure-JS QR decoder used only for the internal scan-reliability check (see below); never used for anything user-facing.
 - **vite-plugin-pwa** — manifest + service worker generation. No `runtimeCaching` rule exists for the Dynamic QR API — every resolution request always hits the network (see [Caching](#caching)).
-- **Cloudflare Workers + D1** (`backend/`) — the Dynamic QR API. A separate, independently deployed TypeScript project; see [Dynamic QR architecture](#dynamic-qr-architecture).
+- **Firebase Cloud Functions + Firestore** (`backend/`) — the Dynamic QR API. A separate, independently deployed TypeScript project; see [Dynamic QR architecture](#dynamic-qr-architecture).
 - No state-management library, no CSS framework, no UI kit — plain React state/context and hand-written CSS, kept deliberately small so the customer-facing landing page stays fast.
 
 ## Project structure
@@ -55,12 +55,14 @@ src/
     common/          Shared small components (EmptyState, ProjectCard)
   pages/             Route-level screens (Dashboard, CreateQR, MyQRCodes, Settings, Landing, NotFound)
 
-backend/             Dynamic QR API — Cloudflare Workers + D1. Independently deployed; see below.
+backend/             Dynamic QR API — Firebase Cloud Functions + Firestore. Independently deployed; see below.
   src/
     routes/          resolve (public) / create, update, status (management, token-authorized)
-    lib/              validation, ids (publicId + management token), auth, entitlements, cors, db
-  migrations/        D1 schema
-  test/              Vitest against the real Worker + a local D1 (no network required)
+    lib/              validation, ids (publicId + management token), auth, entitlements, cors
+    handler.ts       the whole API as a plain Request → Response function
+    store.ts         QrStore interface — firestoreStore.ts (production) / memoryStore.ts (tests)
+    index.ts         the Cloud Function (`api`) adapter
+  test/              Vitest against the real handler + an in-memory store (no network, no Firebase account required)
 ```
 
 Business logic (QR generation, branding, validation, storage, Dynamic QR service calls) is fully decoupled from UI components — every service under `src/services` is a plain TypeScript module with no React or DOM-framework dependency beyond the Canvas/Blob/fetch APIs it needs, so it can be reused unchanged inside a Capacitor WebView.
@@ -138,20 +140,21 @@ Legacy:   #/q/<slug>        → local ProjectRepository       → LandingContent
 
 ### Backend (`backend/`)
 
-A separate, independently deployable project — Cloudflare Workers + D1 (SQLite at the edge) — chosen for: no idle cost and no "sleeping" project (unlike some free-tier hosted databases, a Worker never pauses after inactivity, which matters for a QR that might be scanned rarely), a plain HTTPS JSON API usable identically from this GitHub-Pages-hosted frontend and a future Capacitor app, and TypeScript end-to-end. It has its own `package.json`, `tsconfig.json`, and test suite, and is deployed independently of the frontend's GitHub Pages workflow.
+A separate, independently deployable project — a single public HTTPS Firebase Cloud Function (`api`, Node 22) backed by Firestore — chosen for: no servers to run and no idle cost, a plain HTTPS JSON API usable identically from this GitHub-Pages-hosted frontend and a future Capacitor app, and TypeScript end-to-end. The whole API is a plain `Request → Response` function (`backend/src/handler.ts`) over a small `QrStore` interface, so routing, validation, authorization and entitlement are tested directly with no Firebase involved; only `firestoreStore.ts` and the `index.ts` adapter touch Firebase. It has its own `package.json`, `tsconfig.json`, and test suite, and is deployed independently of the frontend's GitHub Pages workflow. The Firebase project is `smart-qr-studio-app` (`.firebaserc`).
 
-**Database schema** (`backend/migrations/0001_init.sql`) — one table, deliberately minimal:
+**Data model** — one Firestore collection, `dynamic_qr/{publicId}` (the `publicId` is the document id, so uniqueness is enforced by Firestore and a published id can never be recreated):
 
-```sql
-dynamic_qr (
-  id, public_id, owner_id, token_hash, status, content, version, created_at, updated_at
-)
+```
+dynamic_qr/{publicId} { publicId, ownerId, tokenHash, status, content, version, createdAt, updatedAt }
 ```
 
-- `content` is a single JSON column, shaped exactly like `LandingContent` — no separate "backend payload" schema to keep in sync with the frontend's idea of a project.
-- Updates always replace `content` in one complete `UPDATE` statement, never as partial field patches — this is what guarantees a reader only ever sees the fully-old or fully-new document, never a torn write, with no additional locking needed.
-- `status` is `active` | `disabled`; rows are never hard-deleted, so a disabled `publicId` can never later be silently reissued to different content.
-- No `users`, `plans`, or `analytics` tables exist yet — see [Current limitations](#current-limitations).
+- `content` is a single map shaped exactly like `LandingContent` — no separate "backend payload" schema to keep in sync with the frontend's idea of a project.
+- Updates read the document, check authorization, and write the complete new `content` plus `version + 1` in one **Firestore transaction**, never as partial field patches — concurrent publishes serialize, versions have no gaps or duplicates, and a reader only ever sees the fully-old or fully-new document.
+- `status` is `active` | `disabled`; documents are never deleted, so a disabled `publicId` can never later be silently reissued to different content.
+- `tokenHash` is the SHA-256 of the management token; the token itself is never stored. Public resolution returns only `status`, `content` and `version`.
+- **Firestore rules deny every client read/write** (`firestore.rules`). Only the Cloud Function (Admin SDK) touches the collection, so nothing can bypass the API's validation or authorization.
+- A Firestore document is capped at 1 MiB, so the whole published content — including logo/icon images embedded as data URLs — is capped at ~900 KB (`MAX_CONTENT_BYTES`, rejected with a clear 422). Keep logos small (a few hundred KB at most).
+- No `users`, `plans`, or `analytics` collections exist yet — see [Current limitations](#current-limitations).
 
 **API:**
 
@@ -181,9 +184,9 @@ Plan = 'free' | 'pro' | 'business'
 PLAN_ENTITLEMENTS = { free: { dynamicQr: false }, pro: { dynamicQr: true }, business: { dynamicQr: true } }
 ```
 
-No `users`/`plans` table exists, so entitlement is currently decided by the **deployed environment** alone. The product is currently operated at **Business level** (no Free/Pro/Business tiers are sold yet): the GitHub Pages build sets `VITE_DEFAULT_PLAN=business` and the production Worker sets the plain var `DEFAULT_PLAN = "business"` (`backend/wrangler.toml`), so Dynamic QR is available with no Pro badge. Both are optional, validated (`free` | `pro` | `business`, anything else is ignored) and default safely when absent: `development` and `staging` behave as `pro`, `production` defaults every visitor to `free`. Reintroducing tiers later means removing or changing those two values, not any call site. The wizard never inlines a plan comparison — it calls `entitlementService.canUse('dynamicQr')` (`src/hooks/useEntitlement.ts`) and shows Dynamic QR as a locked, "Upgrade to Pro"-labeled option when that's `false`, rather than hiding it. **The backend enforces the identical rule independently on `POST /v1/qr`, so a direct API call — or a tampered frontend bundle that lies about `canUse()` — can't bypass what's actually granted;** the wizard only ever controls what's *shown*, never what's actually possible against the real backend. **No billing provider — Stripe, Razorpay, App Store/Play billing, or otherwise — is referenced anywhere**; connecting one later means replacing the entitlement service's implementation with one that reads a real per-account plan, not changing any call site.
+No `users`/`plans` table exists, so entitlement is currently decided by the **deployed environment** alone. The product is currently operated at **Business level** (no Free/Pro/Business tiers are sold yet): the GitHub Pages build sets `VITE_DEFAULT_PLAN=business` and the backend defaults `DEFAULT_PLAN` to `business` (`backend/src/config.ts`), so Dynamic QR is available with no Pro badge. Both are optional, validated (`free` | `pro` | `business`, anything else is ignored) and default safely when absent: `development` and `staging` behave as `pro`, a `production` deployment with no plan set defaults every visitor to `free`. Reintroducing tiers later means removing or changing those two values, not any call site. The wizard never inlines a plan comparison — it calls `entitlementService.canUse('dynamicQr')` (`src/hooks/useEntitlement.ts`) and shows Dynamic QR as a locked, "Upgrade to Pro"-labeled option when that's `false`, rather than hiding it. **The backend enforces the identical rule independently on `POST /v1/qr`, so a direct API call — or a tampered frontend bundle that lies about `canUse()` — can't bypass what's actually granted;** the wizard only ever controls what's *shown*, never what's actually possible against the real backend. **No billing provider — Stripe, Razorpay, App Store/Play billing, or otherwise — is referenced anywhere**; connecting one later means replacing the entitlement service's implementation with one that reads a real per-account plan, not changing any call site.
 
-**Testing Dynamic QR against a production-configured backend, safely:** production defaulting every visitor to `free` is a deliberate, hard-to-misconfigure safety property — but it also means a backend deployed with `ENVIRONMENT=production` can't normally be entitlement-tested at all. A narrow, fail-closed escape hatch exists for exactly that: provisioning a Worker *secret* (`DYNAMIC_QR_TEST_OVERRIDE_SECRET`, via `wrangler secret put`, never a `wrangler.toml` var and never committed) lets a request to `POST /v1/qr` carrying a matching `X-Dynamic-QR-Test-Override` header bypass the environment default, for that request only. This is not a general-purpose flag:
+**Testing Dynamic QR against a production-configured backend, safely:** production defaulting every visitor to `free` is a deliberate, hard-to-misconfigure safety property — but it also means a backend deployed with `ENVIRONMENT=production` can't normally be entitlement-tested at all. A narrow, fail-closed escape hatch exists for exactly that: provisioning a *secret* (`DYNAMIC_QR_TEST_OVERRIDE_SECRET`, never a plain config value and never committed — nothing provisions one by default) lets a request to `POST /v1/qr` carrying a matching `X-Dynamic-QR-Test-Override` header bypass the environment default, for that request only. This is not a general-purpose flag:
 
 - It is a request **header**, never a query parameter — never logged in access logs or shareable-by-URL the way a query string is.
 - With no secret provisioned (every environment's actual default, including production), the override path doesn't just "default to off" — the check (`isTestOverrideActive` in `backend/src/lib/entitlements.ts`) returns `false` unconditionally before it ever compares anything, so there is no code path where an unset secret can be tricked into matching.
@@ -191,7 +194,7 @@ No `users`/`plans` table exists, so entitlement is currently decided by the **de
 - The frontend's own awareness of it (`VITE_DYNAMIC_QR_TEST_OVERRIDE_SECRET`, `src/services/dynamicQr/config.ts`) is baked in at **build time** for a deliberately separate test build — never present in a normal production build, and not something reachable by editing already-shipped JavaScript in a browser, since a real production bundle simply never contains a secret value to extract.
 - Knowing the frontend's value proves nothing on its own: the backend independently requires its own separately-provisioned secret to match, so leaking one side without the other grants nothing.
 
-See `backend/wrangler.toml`'s `[env.production]` block for the exact provisioning command.
+Configuration (`ENVIRONMENT`, `DEFAULT_PLAN`, `ALLOWED_ORIGINS`) lives in `backend/src/config.ts` as Cloud Functions params with in-repo defaults (`business` plan, `https://sanjug05.github.io` + `http://localhost:5173` origins); override with a `.env` file or the environment.
 
 ### Caching
 
@@ -213,9 +216,9 @@ Two small pieces of logic exist independently on both sides rather than as one s
 - **URL validation** — the `http:`/`https:`-only allowlist exists in `src/lib/validation.ts` (frontend) and `backend/src/lib/validation.ts` (backend).
 - **Entitlement mapping** — the `Plan`/`PLAN_ENTITLEMENTS` shape exists in `src/types/entitlements.ts` (frontend) and `backend/src/lib/entitlements.ts` (backend).
 
-**The backend copy is what's actually authoritative in both cases — this is verified, not assumed.** Every backend test that exercises URL validation or entitlement (`backend/test/api.test.ts`, `backend/test/entitlements.test.ts`) calls the Worker directly over HTTP, with no frontend code in the loop at all — a malicious or malformed request (a `javascript:` URL, an oversized field, a forged entitlement-override header, a request claiming to be from an already-tampered frontend bundle) is rejected purely by the backend's own checks. The frontend's copies exist only to give the wizard fast, offline-friendly feedback before a request is ever sent; removing them entirely would degrade UX, not security, because the backend never trusts anything the client already claims to have checked.
+**The backend copy is what's actually authoritative in both cases — this is verified, not assumed.** Every backend test that exercises URL validation or entitlement (`backend/test/api.test.ts`, `backend/test/entitlements.test.ts`) calls the handler directly as a `Request → Response` function, with no frontend code in the loop at all — a malicious or malformed request (a `javascript:` URL, an oversized field, a forged entitlement-override header, a request claiming to be from an already-tampered frontend bundle) is rejected purely by the backend's own checks. The frontend's copies exist only to give the wizard fast, offline-friendly feedback before a request is ever sent; removing them entirely would degrade UX, not security, because the backend never trusts anything the client already claims to have checked.
 
-**Why not one shared package:** the frontend (Vite/browser) and backend (Cloudflare Workers) are two independently deployed projects with separate `package.json`s, separate `tsconfig.json`s, and no monorepo tooling (no shared workspace, no build-order coordination) connecting them. Introducing a shared package for roughly 30 stable, rarely-changing lines would mean either a path-based cross-project import (coupling two independent deploy pipelines' module resolution together) or an actual monorepo/workspace restructuring — real ongoing complexity for a small, low-churn amount of duplication. This was evaluated and deliberately rejected as disproportionate; each copy is small enough to review side-by-side by hand, and both are covered by their own project's tests, so drift would surface as a test failure rather than silently.
+**Why not one shared package:** the frontend (Vite/browser) and backend (Firebase Cloud Functions) are two independently deployed projects with separate `package.json`s, separate `tsconfig.json`s, and no monorepo tooling (no shared workspace, no build-order coordination) connecting them. Introducing a shared package for roughly 30 stable, rarely-changing lines would mean either a path-based cross-project import (coupling two independent deploy pipelines' module resolution together) or an actual monorepo/workspace restructuring — real ongoing complexity for a small, low-churn amount of duplication. This was evaluated and deliberately rejected as disproportionate; each copy is small enough to review side-by-side by hand, and both are covered by their own project's tests, so drift would surface as a test failure rather than silently.
 
 ## How QR branding works
 
@@ -260,11 +263,10 @@ Open the printed local URL. The customer landing page route is available at `/#/
 ```bash
 cd backend
 npm install
-npm run db:migrate:local   # applies migrations/0001_init.sql to a local D1 — no Cloudflare account needed
-npm run dev                 # wrangler dev on http://127.0.0.1:8787
+npm run test              # the whole API against an in-memory store — no network, no Firebase account needed
 ```
 
-The frontend's `VITE_DYNAMIC_QR_API_BASE_URL` defaults to `http://127.0.0.1:8787` in a plain `npm run dev`, so the two are wired together with no extra config for local development. Static QR development and testing never requires the backend to be running at all.
+To run it locally end-to-end, use the Firebase emulators (`firebase emulators:start --only functions,firestore`; the Firestore emulator needs a recent JDK) and put the Functions emulator URL in `.env.local`, e.g. `VITE_DYNAMIC_QR_API_BASE_URL=http://127.0.0.1:5001/<project-id>/us-central1/api`. The frontend has **no built-in API default** — a build without `VITE_DYNAMIC_QR_API_BASE_URL` fails closed for Dynamic QR. Static QR development and testing never requires the backend at all.
 
 ### Build & checks
 
@@ -277,7 +279,8 @@ npm run lint       # ESLint (typescript-eslint + react-hooks + react-refresh + j
 
 # backend (cd backend first)
 npm run typecheck
-npm run test        # Vitest against the real Worker + a local D1 — no network, no Cloudflare account needed
+npm run build       # compiles to lib/ (what Firebase deploys)
+npm run test        # Vitest against the real handler + an in-memory store — no network, no Firebase account needed
 ```
 
 ### Environment variables
@@ -286,12 +289,12 @@ npm run test        # Vitest against the real Worker + a local D1 — no network
 
 ```bash
 VITE_BASE_PATH=/smart-qr-studio/                    # subpath for a GitHub Pages *project* site; "/" for a custom domain or user/org site
-VITE_DYNAMIC_QR_API_BASE_URL=http://127.0.0.1:8787  # the Dynamic QR backend's origin; required in production builds
+VITE_DYNAMIC_QR_API_BASE_URL=https://<function-host>       # the Dynamic QR API origin (Firebase Function); no default; production builds require a public https URL; set as the DYNAMIC_QR_API_BASE_URL repo variable in CI
 ```
 
 Neither is a secret. The frontend has no secrets of its own.
 
-**Backend** — no runtime secrets exist yet; per-environment configuration (CORS allowlist, environment name) lives in `backend/wrangler.toml`. `backend/.dev.vars.example` documents the pattern for whenever a real secret is needed (copy to `.dev.vars`, which is gitignored; use `wrangler secret put` for staging/production — never commit a real secret).
+**Backend** — no runtime secrets exist; configuration (CORS allowlist, environment name, default plan) are plain Cloud Functions params in `backend/src/config.ts`. CI authenticates to Firebase with a `FIREBASE_SERVICE_ACCOUNT` GitHub secret (a service-account JSON key — never committed). Never commit a real secret.
 
 ## Deploying
 
@@ -308,20 +311,19 @@ The workflow sets `VITE_BASE_PATH` to `/<repo-name>/` automatically. If you depl
 
 Because routing uses `HashRouter`, there is no need for a `404.html` SPA-redirect trick — every route, including `/#/q/...`, is just a URL fragment the static host never sees, so a hard refresh or a shared deep link always resolves correctly, for both QR types.
 
-### Backend — Cloudflare Workers
+### Backend — Firebase Cloud Functions + Firestore
 
-Three separate environments (`development`, `staging`, `production`), each with its own Worker deployment and its own D1 database, configured in `backend/wrangler.toml`. **One-time setup per environment** (requires a Cloudflare account and `wrangler login`, or `CLOUDFLARE_API_TOKEN` in CI):
+One Firebase project (`smart-qr-studio-app`, see `.firebaserc`) hosts the Firestore database and the `api` Cloud Function. **One-time setup** (requires the project on the Blaze plan — Cloud Functions needs it — and `firebase login`):
 
 ```bash
-cd backend
-npx wrangler d1 create smart-qr-studio-staging      # repeat for -prod; copy each database_id into wrangler.toml
-npm run db:migrate:remote:staging                    # or db:migrate:remote:production
-npm run deploy:staging                               # or deploy:production
+firebase deploy --only firestore,functions        # from the repo root; builds backend/ first (firebase.json predeploy)
 ```
 
-A backend-specific GitHub Actions workflow ([`.github/workflows/deploy-backend.yml`](.github/workflows/deploy-backend.yml)) deploys `production` automatically on every push to `main` that touches `backend/**` — it runs `typecheck`, `test`, applies D1 migrations to the real remote production database (idempotent — already-applied migrations are skipped), then `wrangler deploy`, all using a `CLOUDFLARE_API_TOKEN` repository secret you provision once. It has not been exercised against a real Cloudflare account in this environment (no credentials were available) — see [Current limitations](#current-limitations). `staging`/`development` deploys remain manual via the `npm run deploy:<environment>` scripts above until/unless a staging workflow is added too.
+The deployed function URL (printed by the deploy, `https://api-<hash>-uc.a.run.app`) is the value of the `DYNAMIC_QR_API_BASE_URL` **repository variable**, which the Pages workflow injects as `VITE_DYNAMIC_QR_API_BASE_URL` (a public URL, so a variable rather than a secret; the workflow refuses non-https or localhost values).
 
-The backend's URL is independent of the frontend's hostname by design — `publicId` and stored content never reference where the API is served from, so introducing a custom API domain (`api.smartqrstudio.com`) or a custom frontend domain later is a configuration change, not a data migration.
+A backend-specific GitHub Actions workflow ([`.github/workflows/deploy-backend.yml`](.github/workflows/deploy-backend.yml)) redeploys automatically on every push to `main` that touches `backend/**` or the Firebase config — it runs `typecheck`, `test` and `build`, fails with an explicit message if the `FIREBASE_SERVICE_ACCOUNT` secret is missing, then deploys Functions and Firestore rules.
+
+The backend's URL is independent of the frontend's hostname by design — `publicId` and stored content never reference where the API is served from, so introducing a custom API domain or a custom frontend domain later is a configuration change, not a data migration.
 
 ## Android/iOS packaging (Capacitor-ready, not yet packaged)
 
@@ -387,7 +389,7 @@ This is what was actually run and observed, not assumed:
 
 **Automated (backend)**
 - `npm run typecheck` — clean, no errors.
-- `npm run test` (Vitest against the real Worker in a simulated Workers runtime, with a real ephemeral local D1 per test run) — 17 tests, all passing: create, resolve (active/disabled/not-found), update (authorized/missing-token/invalid-token), status toggle (disable/re-enable, authorization-required), malicious URL schemes (`javascript:`, `data:`, `vbscript:`) rejected, more-than-5-destinations silently capped, oversized fields truncated rather than rejected, invalid hex colors rejected, concurrent conflicting updates each apply completely (never a mixed/torn document), and CORS preflight/origin-reflection.
+- `npm run test` (Vitest against the real handler with an in-memory store, plus the Firestore adapter against a fake Firestore) — 60 tests, all passing: create, resolve (active/disabled/not-found), update (authorized/missing-token/invalid-token), status toggle (disable/re-enable, authorization-required), malicious URL schemes (`javascript:`, `data:`, `vbscript:`) rejected, more-than-5-destinations silently capped, oversized fields truncated rather than rejected, invalid hex colors rejected, over-large content rejected, concurrent updates each apply completely with gap-free versions, only the token hash is stored, public resolution exposes only `status`/`content`/`version`, and CORS preflight/origin-reflection.
 
 **QR generation & branding**
 - Verified-scannable badge confirmed for: no branding, uploaded logo, initials, full company name, and the "custom" style.
@@ -453,7 +455,7 @@ Click **"Try a sample (AIS)"** on the Dashboard to load a fully filled-out examp
 - **No logo or custom destination icons on a *shared/scanned Static* QR** — deliberately excluded from the payload to keep the QR scannable (see above); the initials-avatar fallback is used instead. Dynamic QR's backend-stored content is not under this constraint.
 - **QR branding fits are verified, not guaranteed under all real-world conditions** — see [How QR branding works](#how-qr-branding-works).
 - **Initials for non-Latin, non-space-delimited names are a plain truncation**, not a linguistically meaningful abbreviation (see the QR branding section above).
-- **Not tested on a real mobile device or in a native WebView, and not tested against real Cloudflare-hosted staging/production deployments** — only local `wrangler dev` against a local D1. Capacitor packaging has not been performed (see the Android/iOS section above).
+- **Not tested on a real mobile device or in a native WebView, and the Firestore adapter is unit-tested against a fake Firestore; the real Firestore and deployed Function are verified by the live acceptance test, not by the automated suite.** Capacitor packaging has not been performed (see the Android/iOS section above).
 - **Three dev/transitive-dependency `npm audit` advisories are open** in the frontend, judged non-blocking for the reasons given in "Dependency audit" above, not silently ignored.
 
 ## Future roadmap
