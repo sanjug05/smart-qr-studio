@@ -1,26 +1,25 @@
 {
   "name": "smart-qr-studio-backend",
   "private": true,
-  "version": "0.1.0",
-  "type": "module",
-  "description": "Smart QR Studio Dynamic QR API - Cloudflare Workers + D1. Deployed independently from the frontend.",
+  "version": "0.2.0",
+  "type": "commonjs",
+  "description": "Smart QR Studio Dynamic QR API - Firebase Cloud Functions + Firestore. Deployed independently from the frontend.",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "22"
+  },
   "scripts": {
-    "dev": "wrangler dev --env development",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "db:migrate:local": "wrangler d1 migrations apply smart-qr-studio-dev --local --env development",
-    "db:migrate:remote:development": "wrangler d1 migrations apply smart-qr-studio-dev --env development",
-    "db:migrate:remote:staging": "wrangler d1 migrations apply smart-qr-studio-staging --env staging",
-    "db:migrate:remote:production": "wrangler d1 migrations apply smart-qr-studio-prod --env production",
-    "deploy:development": "wrangler deploy --env development",
-    "deploy:staging": "wrangler deploy --env staging",
-    "deploy:production": "wrangler deploy --env production"
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.3.0"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.22.0",
-    "@cloudflare/workers-types": "^5.20260828.1",
+    "@types/node": "^22.0.0",
     "typescript": "^5.5.4",
-    "vitest": "^4.1.0",
-    "wrangler": "^4.0.0"
+    "vitest": "^2.1.9"
   }
 }

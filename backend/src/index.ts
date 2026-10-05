@@ -1,48 +1,37 @@
-import type { Env } from './types'
-import { withCors, handlePreflight } from './lib/cors'
-import { errorResponse } from './lib/json'
-import { resolveQr } from './routes/resolve'
-import { createQr } from './routes/create'
-import { updateQr } from './routes/update'
-import { setStatus } from './routes/status'
+import { onRequest } from 'firebase-functions/v2/https'
+import { initializeApp } from 'firebase-admin/app'
+import { getFirestore } from 'firebase-admin/firestore'
+import { createHandler } from './handler'
+import { createFirestoreStore } from './firestoreStore'
+import { loadConfig } from './config'
 
-const QR_PATH = /^\/v1\/qr\/([^/]+)$/
-const QR_STATUS_PATH = /^\/v1\/qr\/([^/]+)\/status$/
+initializeApp()
+const db = getFirestore()
+db.settings({ ignoreUndefinedProperties: true })
+const store = createFirestoreStore(db)
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    if (request.method === 'OPTIONS') {
-      return handlePreflight(request, env)
-    }
+/**
+ * The single public HTTPS entry point (`/v1/qr…` is routed inside the
+ * handler). Public invoker on purpose: scanners are anonymous, and every
+ * management route authorizes itself with the management token. CORS is
+ * handled by the handler's own allowlist, not by the platform.
+ */
+export const api = onRequest({ invoker: 'public', region: 'us-central1', maxInstances: 10 }, async (req, res) => {
+  const handler = createHandler({ store, config: loadConfig() })
 
-    const { pathname } = new URL(request.url)
-
-    try {
-      const response = await route(request, pathname, env)
-      return withCors(response, request, env)
-    } catch (err) {
-      console.error('Unhandled error', err)
-      return withCors(errorResponse('Internal server error.', 500), request, env)
-    }
+  const host = req.get('host') ?? 'localhost'
+  const url = `https://${host}${req.url}`
+  const headers = new Headers()
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (typeof value === 'string') headers.set(key, value)
+    else if (Array.isArray(value)) headers.set(key, value.join(', '))
   }
-}
+  const hasBody = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS'
+  const body = hasBody && req.rawBody ? new Uint8Array(req.rawBody) : undefined
 
-async function route(request: Request, pathname: string, env: Env): Promise<Response> {
-  if (request.method === 'POST' && pathname === '/v1/qr') {
-    return createQr(request, env)
-  }
+  const response = await handler(new Request(url, { method: req.method, headers, body }))
 
-  const statusMatch = pathname.match(QR_STATUS_PATH)
-  if (statusMatch && request.method === 'PATCH') {
-    return setStatus(decodeURIComponent(statusMatch[1]), request, env)
-  }
-
-  const qrMatch = pathname.match(QR_PATH)
-  if (qrMatch) {
-    const publicId = decodeURIComponent(qrMatch[1])
-    if (request.method === 'GET') return resolveQr(publicId, env)
-    if (request.method === 'PUT') return updateQr(publicId, request, env)
-  }
-
-  return errorResponse('Not found.', 404)
-}
+  res.status(response.status)
+  response.headers.forEach((value, key) => res.setHeader(key, value))
+  res.send(Buffer.from(await response.arrayBuffer()))
+})

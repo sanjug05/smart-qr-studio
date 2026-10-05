@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// Dynamic QR records are read and written ONLY by the Cloud Function API
+// (firebase-admin bypasses these rules). Clients — including anyone who
+// finds the Firebase web config — get no direct access at all, so nothing
+// can bypass the API's validation or management-token authorization.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

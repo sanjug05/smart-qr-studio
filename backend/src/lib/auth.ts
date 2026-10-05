@@ -7,18 +7,18 @@ import type { DynamicQrRecord } from '../types'
  * Every management route calls `authorizeManagementRequest` rather than
  * comparing token hashes inline — this is the one place that logic lives,
  * so swapping the anonymous management-token scheme for real authenticated
- * ownership later (checking `record.owner_id` against a logged-in user
+ * ownership later (checking `record.ownerId` against a logged-in user
  * instead of a bearer token) is a change to this one function, not to
  * every route handler.
  */
 export type AuthorizationResult = { authorized: true } | { authorized: false; reason: 'missing_token' | 'invalid_token' }
 
-export async function authorizeManagementRequest(request: Request, record: Pick<DynamicQrRecord, 'token_hash'>): Promise<AuthorizationResult> {
+export async function authorizeManagementRequest(request: Request, record: Pick<DynamicQrRecord, 'tokenHash'>): Promise<AuthorizationResult> {
   const token = extractBearerToken(request)
   if (!token) return { authorized: false, reason: 'missing_token' }
 
   const candidateHash = await hashToken(token)
-  if (!timingSafeEqual(candidateHash, record.token_hash)) {
+  if (!timingSafeEqual(candidateHash, record.tokenHash)) {
     return { authorized: false, reason: 'invalid_token' }
   }
   return { authorized: true }

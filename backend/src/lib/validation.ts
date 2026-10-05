@@ -23,6 +23,10 @@ const MAX_TAGLINE_LENGTH = 160
 const MAX_ICON_LENGTH = 8 // a short emoji/glyph, never arbitrary text
 const SAFE_IMAGE_DATA_URL = /^data:image\/(png|jpeg|jpg|webp|svg\+xml);base64,/
 const MAX_IMAGE_DATA_URL_LENGTH = 3_000_000 // ~2.2MB of binary once decoded — matches the frontend's 2MB upload cap plus base64 overhead
+// A Firestore document is capped at 1 MiB and the whole published content (images included, as data URLs)
+// lives in one document, so the *total* must fit with headroom for the other fields. This — not the
+// per-image cap above — is the effective image budget for a Dynamic QR.
+export const MAX_CONTENT_BYTES = 900_000
 
 export interface ValidationOutcome {
   valid: boolean
@@ -76,7 +80,12 @@ export function validateDynamicQrContent(input: unknown): ValidationOutcome {
     return { valid: false, errors }
   }
 
-  return { valid: true, errors: [], content: { brand, destinations } }
+  const content = { brand, destinations }
+  if (new TextEncoder().encode(JSON.stringify(content)).length > MAX_CONTENT_BYTES) {
+    return { valid: false, errors: ['Content is too large. Use a smaller logo or icon images (about 600 KB combined at most).'] }
+  }
+
+  return { valid: true, errors: [], content }
 }
 
 function validateBrand(value: unknown, errors: string[]): DynamicQrBrand | null {

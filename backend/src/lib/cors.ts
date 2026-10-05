@@ -1,14 +1,14 @@
-import type { Env } from '../types'
+import type { AppConfig } from '../types'
 import { DYNAMIC_QR_TEST_OVERRIDE_HEADER } from './entitlements'
 
 /**
- * Environment-driven CORS allowlist (see README → "CORS"). No origin is
- * ever hardcoded in source — `ALLOWED_ORIGINS` is a per-environment Worker
- * variable set in wrangler.toml, so adding a future custom domain or a
- * Capacitor app origin is a config change, not a code change.
+ * Config-driven CORS allowlist (see README → "CORS"). Origins come from the
+ * deployment's `ALLOWED_ORIGINS` setting (src/config.ts), so adding a future
+ * custom domain or a Capacitor app origin is a config change, not a code
+ * change. Never a wildcard.
  */
-function allowedOrigins(env: Env): string[] {
-  return env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+function allowedOrigins(config: AppConfig): string[] {
+  return config.allowedOrigins.split(',').map((o) => o.trim()).filter(Boolean)
 }
 
 /**
@@ -22,9 +22,9 @@ function allowedOrigins(env: Env): string[] {
  * denied a CORS header — omitting the header for a non-matching Origin is
  * the correct, intentional restriction instead.
  */
-function corsHeadersFor(request: Request, env: Env): Record<string, string> {
+function corsHeadersFor(request: Request, config: AppConfig): Record<string, string> {
   const origin = request.headers.get('Origin')
-  const allowed = allowedOrigins(env)
+  const allowed = allowedOrigins(config)
   const headers: Record<string, string> = {
     'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, OPTIONS',
@@ -38,14 +38,14 @@ function corsHeadersFor(request: Request, env: Env): Record<string, string> {
 }
 
 /** Wraps a Response with the appropriate CORS headers for the calling origin. */
-export function withCors(response: Response, request: Request, env: Env): Response {
+export function withCors(response: Response, request: Request, config: AppConfig): Response {
   const headers = new Headers(response.headers)
-  for (const [key, value] of Object.entries(corsHeadersFor(request, env))) {
+  for (const [key, value] of Object.entries(corsHeadersFor(request, config))) {
     headers.set(key, value)
   }
   return new Response(response.body, { status: response.status, headers })
 }
 
-export function handlePreflight(request: Request, env: Env): Response {
-  return new Response(null, { status: 204, headers: corsHeadersFor(request, env) })
+export function handlePreflight(request: Request, config: AppConfig): Response {
+  return new Response(null, { status: 204, headers: corsHeadersFor(request, config) })
 }

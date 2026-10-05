@@ -8,29 +8,25 @@
  * them in sync by hand if either changes.
  */
 
-export interface Env {
-  DB: D1Database
-  ENVIRONMENT: 'development' | 'staging' | 'production'
-  ALLOWED_ORIGINS: string
+/** Runtime configuration — plain, non-secret values resolved once per deployment (see src/config.ts). */
+export interface AppConfig {
+  environment: 'development' | 'staging' | 'production'
+  /** Comma-separated list of allowed CORS origins. Never a wildcard. */
+  allowedOrigins: string
   /**
-   * Optional plain var naming the plan every caller of this deployment is
-   * treated as (`free` | `pro` | `business`) until per-account plans
-   * exist. Unset or unrecognized → the safe per-environment default in
-   * lib/entitlements.ts. Not a secret.
+   * Optional plan every caller of this deployment is treated as
+   * (`free` | `pro` | `business`) until per-account plans exist. Unset or
+   * unrecognized → the safe per-environment default in lib/entitlements.ts.
    */
-  DEFAULT_PLAN?: string
+  defaultPlan?: string
   /**
-   * A Worker *secret* (set via `wrangler secret put`, never a plaintext
-   * `wrangler.toml` var) that, when present, allows a request carrying the
-   * matching `X-Dynamic-QR-Test-Override` header to bypass the
-   * environment's default entitlement — e.g. testing Dynamic QR end-to-end
-   * against a `production`-configured backend without enabling it for
-   * every real production user. Undefined/unset by default on every
-   * environment, including production — see lib/entitlements.ts, which
-   * treats an unset value as "override path does not exist," not "override
-   * always matches."
+   * Optional secret that, when present, allows a request carrying the
+   * matching `X-Dynamic-QR-Test-Override` header to bypass the deployment's
+   * default entitlement. Not provisioned anywhere by default — see
+   * lib/entitlements.ts, which treats an unset value as "override path does
+   * not exist," not "override always matches."
    */
-  DYNAMIC_QR_TEST_OVERRIDE_SECRET?: string
+  testOverrideSecret?: string
 }
 
 export interface DynamicQrDestination {
@@ -60,14 +56,17 @@ export interface DynamicQrContent {
 
 export type DynamicQrStatus = 'active' | 'disabled'
 
+/** One Firestore document: `dynamic_qr/{publicId}`. */
 export interface DynamicQrRecord {
-  id: number
-  public_id: string
-  owner_id: string | null
-  token_hash: string
+  publicId: string
+  /** Null in anonymous V1 (management token only); becomes a real user id once accounts exist. */
+  ownerId: string | null
+  /** SHA-256 hex digest of the management token. The plaintext token is never stored. */
+  tokenHash: string
   status: DynamicQrStatus
-  content: string // JSON-encoded DynamicQrContent
+  content: DynamicQrContent
+  /** Incremented atomically on every successful publish. */
   version: number
-  created_at: string
-  updated_at: string
+  createdAt: string
+  updatedAt: string
 }

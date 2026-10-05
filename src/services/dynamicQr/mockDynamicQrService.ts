@@ -6,7 +6,7 @@ import { dynamicQrAuthorizationService } from './dynamicQrAuthorizationService'
  * In-memory stand-in for the real backend — same interface, no network
  * dependency. Used by component/unit tests so they can exercise the
  * create → resolve → update → resolve-again → disable flow without a
- * running Worker (see README → "Testability"). Not wired into the app by
+ * running backend (see README → "Testability"). Not wired into the app by
  * default; import and construct it directly wherever a test needs it.
  */
 export class MockDynamicQrService implements DynamicQrService {

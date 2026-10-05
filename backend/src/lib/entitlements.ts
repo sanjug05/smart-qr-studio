@@ -52,11 +52,11 @@ function isPlan(value: string | undefined): value is Plan {
 
 export interface EntitlementCheckInput {
   environment: string
-  /** `env.DEFAULT_PLAN` — a plain (non-secret) `wrangler.toml` var. Optional; see resolveEnvironmentDefaultPlan(). */
+  /** `config.defaultPlan` — the plain (non-secret) `DEFAULT_PLAN` setting. Optional; see resolveEnvironmentDefaultPlan(). */
   configuredDefaultPlan?: string
   /** The exact value of the `X-Dynamic-QR-Test-Override` request header, or null if absent. Never read from a query string. */
   overrideHeaderValue: string | null
-  /** `env.DYNAMIC_QR_TEST_OVERRIDE_SECRET` — a Worker *secret*, not a `wrangler.toml` var. Undefined on every environment unless explicitly provisioned. */
+  /** `config.testOverrideSecret` — a secret, never a plain setting. Undefined on every environment unless explicitly provisioned. */
   configuredOverrideSecret: string | undefined
 }
 
@@ -64,8 +64,7 @@ export interface EntitlementCheckInput {
  * A production-configured backend can still be entitlement-tested end to
  * end without granting Dynamic QR to real production traffic — but only
  * if someone has deliberately provisioned a secret for that specific
- * deployment (`wrangler secret put DYNAMIC_QR_TEST_OVERRIDE_SECRET --env
- * production`) AND the caller presents the exact matching value in a
+ * deployment (the `DYNAMIC_QR_TEST_OVERRIDE_SECRET` secret) AND the caller presents the exact matching value in a
  * request header.
  *
  * Fails closed on every axis:
@@ -79,7 +78,7 @@ export interface EntitlementCheckInput {
  *   custom header on a same-purpose management call does not.
  * - This check has no relationship to `localStorage` or any other
  *   client-stored state — it is evaluated entirely from the incoming
- *   request and this Worker's own secret binding, so editing anything in
+ *   request and this backend's own secret, so editing anything in
  *   a browser's storage cannot influence it.
  */
 export function isTestOverrideActive(input: Pick<EntitlementCheckInput, 'overrideHeaderValue' | 'configuredOverrideSecret'>): boolean {

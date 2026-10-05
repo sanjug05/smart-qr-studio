@@ -4,7 +4,7 @@ import { dynamicQrAuthorizationService } from './dynamicQrAuthorizationService'
 import { getDynamicQrApiBaseUrl, getDynamicQrTestOverrideSecret, DYNAMIC_QR_TEST_OVERRIDE_HEADER } from './config'
 
 /**
- * The real implementation, talking to the Cloudflare Workers + D1 API
+ * The real implementation, talking to the Firebase Cloud Functions + Firestore API
  * described in /README.md → "Dynamic QR architecture". Every management
  * call attaches its Authorization header via
  * `dynamicQrAuthorizationService` — this file never reads or writes a

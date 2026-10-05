@@ -1,5 +1,4 @@
-import type { Env } from '../types'
-import { getByPublicId } from '../lib/db'
+import type { Ctx } from '../handler'
 import { jsonResponse, errorResponse } from '../lib/json'
 
 /**
@@ -8,8 +7,8 @@ import { jsonResponse, errorResponse } from '../lib/json'
  * whole point (a scanner has no credentials). Editing is a completely
  * separate, authorized surface — see routes/update.ts and routes/status.ts.
  */
-export async function resolveQr(publicId: string, env: Env): Promise<Response> {
-  const record = await getByPublicId(env, publicId)
+export async function resolveQr(publicId: string, { store }: Ctx): Promise<Response> {
+  const record = await store.get(publicId)
   if (!record) {
     return errorResponse('QR code not found.', 404)
   }
@@ -18,9 +17,6 @@ export async function resolveQr(publicId: string, env: Env): Promise<Response> {
     return jsonResponse({ status: 'disabled' })
   }
 
-  return jsonResponse({
-    status: 'active',
-    content: JSON.parse(record.content),
-    version: record.version
-  })
+  // Only these three fields ever leave the backend — never tokenHash/ownerId/timestamps.
+  return jsonResponse({ status: 'active', content: record.content, version: record.version })
 }

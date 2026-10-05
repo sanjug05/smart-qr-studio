@@ -1,4 +1,4 @@
-import { SELF, env } from 'cloudflare:test'
+import { SELF, env } from './harness'
 import { describe, it, expect, afterEach } from 'vitest'
 import { DYNAMIC_QR_TEST_OVERRIDE_HEADER } from '../src/lib/entitlements'
 
@@ -22,7 +22,7 @@ async function createDynamicQr(overrides: Partial<typeof VALID_CONTENT> = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...VALID_CONTENT, ...overrides })
   })
-  const body = await res.json<{ publicId: string; managementToken: string; content: unknown; version: number }>()
+  const body = (await res.json()) as { publicId: string; managementToken: string; content: unknown; version: number }
   return { res, body }
 }
 
@@ -90,7 +90,7 @@ describe('GET /v1/qr/:publicId — resolve', () => {
   it('resolves an active Dynamic QR with its published content', async () => {
     const { body: created } = await createDynamicQr()
     const res = await SELF.fetch(`https://api.test/v1/qr/${created.publicId}`)
-    const body = await res.json<{ status: string; content: { brand: { companyName: string } } }>()
+    const body = (await res.json()) as { status: string; content: { brand: { companyName: string } } }
     expect(res.status).toBe(200)
     expect(body.status).toBe('active')
     expect(body.content.brand.companyName).toBe('GreenLeaf Café')
@@ -114,13 +114,13 @@ describe('PUT /v1/qr/:publicId — update', () => {
         destinations: [{ id: 'd0', label: 'Website', url: 'https://new-website.example.com', icon: '🌐', enabled: true, order: 0 }]
       })
     })
-    const updateBody = await updateRes.json<{ content: { destinations: Array<{ url: string }> }; version: number }>()
+    const updateBody = (await updateRes.json()) as { content: { destinations: Array<{ url: string }> }; version: number }
     expect(updateRes.status).toBe(200)
     expect(updateBody.version).toBe(2)
     expect(updateBody.content.destinations[0].url).toBe('https://new-website.example.com/')
 
     const resolveRes = await SELF.fetch(`https://api.test/v1/qr/${created.publicId}`)
-    const resolveBody = await resolveRes.json<{ content: { destinations: Array<{ url: string }> } }>()
+    const resolveBody = (await resolveRes.json()) as { content: { destinations: Array<{ url: string }> } }
     expect(resolveBody.content.destinations[0].url).toBe('https://new-website.example.com/')
 
     // The identifier printed on physical material must never change.
@@ -157,7 +157,7 @@ describe('PUT /v1/qr/:publicId — update', () => {
     expect(badRes.status).toBe(422)
 
     const resolveRes = await SELF.fetch(`https://api.test/v1/qr/${created.publicId}`)
-    const resolveBody = await resolveRes.json<{ content: { brand: { companyName: string } }; version: number }>()
+    const resolveBody = (await resolveRes.json()) as { content: { brand: { companyName: string } }; version: number }
     expect(resolveBody.content.brand.companyName).toBe('GreenLeaf Café')
     expect(resolveBody.version).toBe(1)
   })
@@ -177,7 +177,7 @@ describe('PUT /v1/qr/:publicId — update', () => {
     await Promise.all([put(contentA), put(contentB)])
 
     const resolveRes = await SELF.fetch(`https://api.test/v1/qr/${created.publicId}`)
-    const resolveBody = await resolveRes.json<{ content: { brand: { companyName: string } } }>()
+    const resolveBody = (await resolveRes.json()) as { content: { brand: { companyName: string } } }
     expect(['Version A Co', 'Version B Co']).toContain(resolveBody.content.brand.companyName)
   })
 })
@@ -194,7 +194,7 @@ describe('PATCH /v1/qr/:publicId/status — disable', () => {
     expect(disableRes.status).toBe(200)
 
     const resolveRes = await SELF.fetch(`https://api.test/v1/qr/${created.publicId}`)
-    const resolveBody = await resolveRes.json<{ status: string; content?: unknown }>()
+    const resolveBody = (await resolveRes.json()) as { status: string; content?: unknown }
     expect(resolveRes.status).toBe(200)
     expect(resolveBody.status).toBe('disabled')
     expect(resolveBody.content).toBeUndefined()
@@ -224,7 +224,7 @@ describe('PATCH /v1/qr/:publicId/status — disable', () => {
       body: JSON.stringify({ status: 'active' })
     })
     const resolveRes = await SELF.fetch(`https://api.test/v1/qr/${created.publicId}`)
-    const resolveBody = await resolveRes.json<{ status: string }>()
+    const resolveBody = (await resolveRes.json()) as { status: string }
     expect(resolveBody.status).toBe('active')
   })
 })
@@ -343,7 +343,7 @@ describe('Management token security', () => {
     expect(updateRes.status).toBe(200)
 
     const resolveRes = await SELF.fetch(`https://api.test/v1/qr/${created.publicId}`)
-    const resolveBody = await resolveRes.json<{ status: string }>()
+    const resolveBody = (await resolveRes.json()) as { status: string }
     // Content changed, but status must still be exactly what it was set to —
     // an update must never be able to reassign a disabled QR back to active
     // as a side effect.
