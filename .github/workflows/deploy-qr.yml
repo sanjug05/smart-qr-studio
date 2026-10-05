@@ -51,6 +51,7 @@ jobs:
 
       # Public build-time settings live in repository *variables* (none of them is a secret).
       - name: Check configuration
+        id: config
         env:
           API_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
           FB_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
@@ -71,7 +72,12 @@ jobs:
           for v in FB_API_KEY FB_AUTH_DOMAIN FB_PROJECT_ID FB_APP_ID; do
             [ -n "${!v}" ] || fail "Missing Firebase web config" "Set the repository variables FIREBASE_WEB_API_KEY, FIREBASE_WEB_AUTH_DOMAIN, FIREBASE_WEB_PROJECT_ID and FIREBASE_WEB_APP_ID (from: firebase apps:sdkconfig web)."
           done
-          [ -n "$HOSTING_SA" ] || fail "Missing QR_HOSTING_SERVICE_ACCOUNT" "Add a repository secret QR_HOSTING_SERVICE_ACCOUNT: a service-account JSON key with the 'Firebase Hosting Admin' role on project ${HOSTING_PROJECT}."
+          # Publishing needs a credential for the project that owns the sanjugupta.com Hosting site. Without it the
+          # checks and build still run, and the publish step is skipped with a visible warning (not a failure).
+          if [ -n "$HOSTING_SA" ]; then echo "publish=true" >> "$GITHUB_OUTPUT"; else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Publishing skipped::The QR_HOSTING_SERVICE_ACCOUNT secret is not set (a service-account key with 'Firebase Hosting Admin' on project ${HOSTING_PROJECT}). The app was built and checked but NOT published to /qr."
+          fi
 
       - name: Build
         env:
@@ -94,11 +100,13 @@ jobs:
           # The real API endpoint must be in the bundle; no loopback API URL, no Cloudflare reference.
           grep -rlF "$API_URL" dist/assets | head -1 | grep -q . || { echo "::error::The API URL is not in the built bundle."; exit 1; }
           if grep -rhoE "https?://(127\.0\.0\.1|0\.0\.0\.0|localhost:[0-9]+)[^\"' ]*" dist/assets --include=*.js | grep -q .; then echo "::error::A loopback URL is in the bundle."; exit 1; fi
-          if grep -rliE "cloudflare|workers\.dev" dist --include=*.js --include=*.html | grep -q .; then echo "::error::A Cloudflare reference is in the bundle."; exit 1; fi
+          # (The Firebase SDK contains the plain string "Cloudflare-Workers" in its runtime detection; that is not an endpoint.)
+          if grep -rhoiE "workers\.dev|https?://[a-z0-9.-]*cloudflare[a-z0-9./-]*" dist --include=*.js --include=*.html | grep -q .; then echo "::error::A Cloudflare endpoint is in the bundle."; exit 1; fi
           grep -q '"scope":"/qr"' dist/manifest.webmanifest || { echo "::error::PWA scope is not /qr."; exit 1; }
           ! grep -q "runtimeCaching" dist/sw.js || { echo "::error::The service worker must not use runtime caching."; exit 1; }
 
       - uses: google-github-actions/auth@v2
+        if: steps.config.outputs.publish == 'true'
         id: auth
         with:
           credentials_json: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
@@ -106,6 +114,7 @@ jobs:
           access_token_scopes: https://www.googleapis.com/auth/cloud-platform
 
       - name: Publish under /qr (live)
+        if: steps.config.outputs.publish == 'true'
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
         run: node scripts/deploy-qr-hosting.mjs --site "$HOSTING_SITE" --project "$HOSTING_PROJECT" --dist dist --channel live --message "Smart QR Studio ${GITHUB_SHA::7}"
