@@ -13,7 +13,8 @@
     "test": "vitest run",
     "cap:sync": "cap sync",
     "test:rules": "firebase emulators:exec --only firestore --project demo-smart-qr-rules \"vitest run --config vitest.rules.config.ts\"",
-    "test:rules:remote": "node scripts/run-rules-cases-remote.cjs"
+    "test:rules:remote": "node scripts/run-rules-cases-remote.cjs",
+    "test:live": "vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
     "firebase": "11.10.0",
