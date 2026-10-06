@@ -115,13 +115,10 @@ jobs:
         id: auth
         with:
           credentials_json: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
-          token_format: access_token
-          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
 
       - name: Publish under /qr (live)
         if: steps.config.outputs.publish == 'true'
         env:
-          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
           DRY_RUN: ${{ inputs.dry_run == true && '--dry-run' || '' }}
         run: node scripts/deploy-qr-hosting.mjs --site "$HOSTING_SITE" --project "$HOSTING_PROJECT" --dist dist --channel live --message "Smart QR Studio ${GITHUB_SHA::7}" $DRY_RUN
 

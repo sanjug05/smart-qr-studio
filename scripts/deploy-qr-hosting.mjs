@@ -24,10 +24,11 @@
  *        --dist dist --channel qr-preview [--dry-run]
  *
  * Auth (the token is kept in memory and never printed):
- *   - GOOGLE_OAUTH_ACCESS_TOKEN env var (CI: google-github-actions/auth with token_format: access_token), or
+ *   - GOOGLE_APPLICATION_CREDENTIALS pointing at a service-account key (CI: google-github-actions/auth), or
+ *   - GOOGLE_OAUTH_ACCESS_TOKEN env var, or
  *   - the local Firebase CLI login (run `firebase login` first).
  */
-import { createHash } from 'node:crypto'
+import { createHash, createSign } from 'node:crypto'
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join, relative, sep, resolve } from 'node:path'
@@ -52,8 +53,30 @@ const dryRun = flag('dry-run')
 const message = opt('message', `Smart QR Studio at ${MOUNT}`)
 
 // -------------------------------------------------------------------- auth
+/**
+ * Access token for a service-account key file (GOOGLE_APPLICATION_CREDENTIALS, as written by google-github-actions/auth):
+ * a signed JWT assertion exchanged at Google's token endpoint. Pure Node — no impersonation, no extra IAM or API.
+ */
+async function serviceAccountToken(keyFile) {
+  const key = JSON.parse(readFileSync(keyFile, 'utf8'))
+  if (key.type !== 'service_account' || !key.private_key || !key.client_email) throw new Error('GOOGLE_APPLICATION_CREDENTIALS is not a service-account key.')
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url')
+  const now = Math.floor(Date.now() / 1000)
+  const unsigned = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iss: key.client_email, scope: 'https://www.googleapis.com/auth/cloud-platform', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`
+  const signature = createSign('RSA-SHA256').update(unsigned).sign(key.private_key).toString('base64url')
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${unsigned}.${signature}` })
+  })
+  const body = await res.json()
+  if (!res.ok || !body.access_token) throw new Error(`Could not get an access token for the service account (${res.status} ${body.error ?? ''}).`)
+  return body.access_token
+}
+
 async function getAccessToken() {
   if (process.env.GOOGLE_OAUTH_ACCESS_TOKEN) return process.env.GOOGLE_OAUTH_ACCESS_TOKEN
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) return serviceAccountToken(process.env.GOOGLE_APPLICATION_CREDENTIALS)
   quotaProject = project
   const candidates = [
     join(process.env.APPDATA || '', 'npm', 'node_modules', 'firebase-tools'),
