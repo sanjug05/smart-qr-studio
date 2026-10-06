@@ -21,6 +21,11 @@ on:
       - "scripts/deploy-qr-hosting.mjs"
       - ".github/workflows/deploy-qr.yml"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate the credential and plan only — no release"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -117,4 +122,19 @@ jobs:
         if: steps.config.outputs.publish == 'true'
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-        run: node scripts/deploy-qr-hosting.mjs --site "$HOSTING_SITE" --project "$HOSTING_PROJECT" --dist dist --channel live --message "Smart QR Studio ${GITHUB_SHA::7}"
+          DRY_RUN: ${{ inputs.dry_run == true && '--dry-run' || '' }}
+        run: node scripts/deploy-qr-hosting.mjs --site "$HOSTING_SITE" --project "$HOSTING_PROJECT" --dist dist --channel live --message "Smart QR Studio ${GITHUB_SHA::7}" $DRY_RUN
+
+      # After a real publish, confirm all three parts of the site answer and that /qr and /learning keep their own,
+      # narrow service-worker scopes (neither may claim the site root).
+      - name: Verify the live site
+        if: steps.config.outputs.publish == 'true' && inputs.dry_run != true
+        run: |
+          for p in / /learning /qr; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://sanjugupta.com$p")
+            echo "$p -> $code"
+            [ "$code" = "200" ] || { echo "::error::https://sanjugupta.com$p returned $code"; exit 1; }
+          done
+          curl -sI https://sanjugupta.com/qr/sw.js | tr -d '\r' | grep -iq '^service-worker-allowed: /qr$' || { echo "::error::/qr/sw.js lost Service-Worker-Allowed: /qr"; exit 1; }
+          curl -sI https://sanjugupta.com/learning/sw.js | tr -d '\r' | grep -iq '^service-worker-allowed: /learning$' || { echo "::error::/learning service-worker header changed"; exit 1; }
+
