@@ -1,0 +1,220 @@
+name: Smart QR Studio — PREVIEW ONLY (channel qr-preview)
+
+# PREVIEW ONLY. This workflow can never publish to the live site:
+#   - it runs only when started by hand (workflow_dispatch), never on a push,
+#   - the channel is the fixed value qr-preview, and the first step refuses anything else,
+#   - there is no promotion step; this file contains no live release at all.
+# dry_run defaults to TRUE. With dry_run=true it only prints the plan and creates nothing.
+# With dry_run=false it creates one new Hosting version (live files + the /qr app) and
+# releases it to the qr-preview preview channel only (auto-expires after 7 days).
+# The publisher script and deploy-qr.yml are untouched; this file adds nothing else.
+#
+# WARNING — THE PREVIEW IS PUBLIC. A Firebase preview channel URL needs no sign-in: anyone who has the link
+# can open it, and it serves a copy of the ENTIRE current Hosting site (the root website, /hq, /learning,
+# /coffee and /qr), not just /qr. It is NOT a private staging environment. Do not share the URL, and delete
+# the channel when you are finished (it also expires on its own after 7 days).
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Plan only — creates nothing. Untick to create the PUBLIC qr-preview release (serves a copy of the whole site)."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-qr-preview
+  cancel-in-progress: false
+
+env:
+  HOSTING_SITE: sanjugupta-web
+  HOSTING_PROJECT: ais-channel-os
+  PREVIEW_CHANNEL: qr-preview
+  # The plan that was verified by the successful dry run. If the live site legitimately changes, the
+  # plan check below fails on purpose: re-verify, then update these numbers in a reviewed change.
+  EXPECT_LIVE_VERSION: c1573a259001a472
+  EXPECT_EXISTING_FILES: "506"
+  EXPECT_QR_FILES: "31"
+  EXPECT_HEADER_RULES: "12"
+  EXPECT_QR_HEADER_RULES: "5"
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — preview channel only, and resolve the mode
+        id: mode
+        shell: bash
+        env:
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$PREVIEW_CHANNEL" != "qr-preview" ]; then
+            echo "::error title=Refused::The channel must be exactly 'qr-preview' (got '$PREVIEW_CHANNEL'). This workflow never targets any other channel."
+            exit 1
+          fi
+          case "$DRY_RUN_INPUT" in
+            true)
+              echo "mode=dry" >> "$GITHUB_OUTPUT"
+              echo "MODE: DRY RUN (dry_run=true) — the plan is checked and nothing is created." ;;
+            false)
+              echo "mode=real" >> "$GITHUB_OUTPUT"
+              echo "MODE: REAL PREVIEW RELEASE (dry_run=false) — a new version is created and released to channel '$PREVIEW_CHANNEL' only."
+              echo "::warning title=The preview will be public::The qr-preview URL needs no sign-in and serves a copy of the ENTIRE current Hosting site, not just /qr. It is not a private staging environment." ;;
+            *)
+              echo "::error title=Refused::dry_run must be exactly 'true' or 'false' (got '$DRY_RUN_INPUT'). Nothing was run."
+              exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+      # Public build-time settings live in repository *variables* (none of them is a secret).
+      - name: Check configuration
+        id: config
+        env:
+          API_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
+          FB_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+          FB_AUTH_DOMAIN: ${{ vars.FIREBASE_WEB_AUTH_DOMAIN }}
+          FB_PROJECT_ID: ${{ vars.FIREBASE_WEB_PROJECT_ID }}
+          FB_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+          HOSTING_SA: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
+        run: |
+          fail() { echo "::error title=$1::$2"; exit 1; }
+          [ -n "$API_URL" ] || fail "Missing DYNAMIC_QR_API_BASE_URL" "Set the repository variable DYNAMIC_QR_API_BASE_URL to the Firebase Function URL (https only)."
+          case "$API_URL" in
+            https://*) ;;
+            *) fail "Invalid DYNAMIC_QR_API_BASE_URL" "Must start with https://" ;;
+          esac
+          case "$API_URL" in
+            *localhost*|*127.0.0.1*|*0.0.0.0*|*'[::1]'*|*cloudflare*|*workers.dev*) fail "Invalid DYNAMIC_QR_API_BASE_URL" "Must be the public Firebase endpoint, not localhost or a Cloudflare URL." ;;
+          esac
+          for v in FB_API_KEY FB_AUTH_DOMAIN FB_PROJECT_ID FB_APP_ID; do
+            [ -n "${!v}" ] || fail "Missing Firebase web config" "Set the repository variables FIREBASE_WEB_API_KEY, FIREBASE_WEB_AUTH_DOMAIN, FIREBASE_WEB_PROJECT_ID and FIREBASE_WEB_APP_ID (from: firebase apps:sdkconfig web)."
+          done
+          # Publishing needs a credential for the project that owns the sanjugupta.com Hosting site. Without it the
+          # checks and build still run, and the publish step is skipped with a visible warning (not a failure).
+          if [ -n "$HOSTING_SA" ]; then echo "publish=true" >> "$GITHUB_OUTPUT"; else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Publishing skipped::The QR_HOSTING_SERVICE_ACCOUNT secret is not set (a service-account key with 'Firebase Hosting Admin' on project ${HOSTING_PROJECT}). The app was built and checked but NOT published to /qr."
+          fi
+
+      - name: Build
+        env:
+          VITE_BASE_PATH: /qr/
+          VITE_PWA_SCOPE: /qr
+          VITE_PUBLIC_BASE_URL: https://sanjugupta.com/qr/
+          # The product currently operates at Business level; keep in step with DEFAULT_PLAN in backend/src/config.ts.
+          VITE_DEFAULT_PLAN: business
+          VITE_DYNAMIC_QR_API_BASE_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
+          VITE_FIREBASE_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.FIREBASE_WEB_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_WEB_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+        run: npm run build
+
+      - name: Check the build is safe to publish
+        env:
+          API_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
+        run: |
+          # The real API endpoint must be in the bundle; no loopback API URL, no Cloudflare reference.
+          grep -rlF "$API_URL" dist/assets | head -1 | grep -q . || { echo "::error::The API URL is not in the built bundle."; exit 1; }
+          if grep -rhoE "https?://(127\.0\.0\.1|0\.0\.0\.0|localhost:[0-9]+)[^\"' ]*" dist/assets --include=*.js | grep -q .; then echo "::error::A loopback URL is in the bundle."; exit 1; fi
+          # (The Firebase SDK contains the plain string "Cloudflare-Workers" in its runtime detection; that is not an endpoint.)
+          if grep -rhoiE "workers\.dev|https?://[a-z0-9.-]*cloudflare[a-z0-9./-]*" dist --include=*.js --include=*.html | grep -q .; then echo "::error::A Cloudflare endpoint is in the bundle."; exit 1; fi
+          grep -q '"scope":"/qr"' dist/manifest.webmanifest || { echo "::error::PWA scope is not /qr."; exit 1; }
+          ! grep -q "runtimeCaching" dist/sw.js || { echo "::error::The service worker must not use runtime caching."; exit 1; }
+
+      - uses: google-github-actions/auth@v2
+        if: steps.config.outputs.publish == 'true'
+        id: auth
+        with:
+          credentials_json: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
+
+      # Read-only plan, always. Prints what the new version would contain; creates nothing.
+      - name: Plan (read-only dry run — always)
+        if: steps.config.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/deploy-qr-hosting.mjs --site "$HOSTING_SITE" --project "$HOSTING_PROJECT" --dist dist \
+            --channel "$PREVIEW_CHANNEL" --message "Smart QR Studio PREVIEW ${GITHUB_SHA::7}" --dry-run 2>&1 | tee plan.log
+
+      # Gate: the plan must match the verified one exactly, before anything can be created.
+      - name: Assert the plan (506 kept, 31 added, 0 removed, 5 QR header rules)
+        if: steps.config.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Plan check failed::$1"; exit 1; }
+          live_re='^live version ([0-9a-f]{16}): ([0-9]+) files \(([0-9]+) already under /qr/\)$'
+          new_re='^new version: ([0-9]+) existing files kept \+ ([0-9]+) files under /qr/ ; header rules ([0-9]+) \(([0-9]+) for /qr\)$'
+          [ "$(grep -cE "$live_re" plan.log || true)" = "1" ] || fail "expected exactly one 'live version' line in the plan"
+          [ "$(grep -cE "$new_re" plan.log || true)" = "1" ] || fail "expected exactly one 'new version' line in the plan"
+          [[ "$(grep -E "$live_re" plan.log)" =~ $live_re ]]
+          live_ver="${BASH_REMATCH[1]}"; live_files="${BASH_REMATCH[2]}"; live_qr="${BASH_REMATCH[3]}"
+          [[ "$(grep -E "$new_re" plan.log)" =~ $new_re ]]
+          kept="${BASH_REMATCH[1]}"; qr_files="${BASH_REMATCH[2]}"; hdr="${BASH_REMATCH[3]}"; qr_hdr="${BASH_REMATCH[4]}"
+          [ "$live_ver" = "$EXPECT_LIVE_VERSION" ]        || fail "live version is $live_ver, expected $EXPECT_LIVE_VERSION"
+          [ "$live_files" = "$EXPECT_EXISTING_FILES" ]   || fail "live has $live_files files, expected $EXPECT_EXISTING_FILES"
+          [ "$live_qr" = "0" ]                           || fail "$live_qr files already under /qr/ in live (expected none)"
+          [ "$kept" = "$live_files" ]                    || fail "files kept ($kept) differ from live files ($live_files): something would be removed"
+          [ "$qr_files" = "$EXPECT_QR_FILES" ]           || fail "$qr_files /qr files planned, expected $EXPECT_QR_FILES"
+          [ "$hdr" = "$EXPECT_HEADER_RULES" ]            || fail "$hdr header rules planned, expected $EXPECT_HEADER_RULES"
+          [ "$qr_hdr" = "$EXPECT_QR_HEADER_RULES" ]      || fail "$qr_hdr /qr header rules planned, expected $EXPECT_QR_HEADER_RULES"
+          grep -qxF "DRY RUN — nothing created. Target channel would be: qr-preview" plan.log || fail "the plan does not target qr-preview"
+          echo "PLAN OK: $kept existing files kept, $qr_files added under /qr/ (total $((kept + qr_files))), $hdr header rules ($qr_hdr for /qr), live version $live_ver."
+
+      # Real preview release. Runs ONLY when dry_run=false, after the plan above passed.
+      - name: Publish to the qr-preview channel (dry_run=false only)
+        if: steps.config.outputs.publish == 'true' && steps.mode.outputs.mode == 'real'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MODE: REAL — releasing to channel '$PREVIEW_CHANNEL' only (never live)."
+          node scripts/deploy-qr-hosting.mjs --site "$HOSTING_SITE" --project "$HOSTING_PROJECT" --dist dist \
+            --channel "$PREVIEW_CHANNEL" --message "Smart QR Studio PREVIEW ${GITHUB_SHA::7}" 2>&1 | tee publish.log
+
+      # The preview URL is taken from the publisher's own output line:
+      #   released to channel "qr-preview": <url>
+      - name: Verify the preview (preview URL only)
+        if: steps.config.outputs.publish == 'true' && steps.mode.outputs.mode == 'real'
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Preview check failed::$1"; exit 1; }
+          [ "$(grep -c '^released to channel "qr-preview": ' publish.log || true)" = "1" ] || fail "expected exactly one 'released to channel \"qr-preview\"' line"
+          URL="$(sed -n 's/^released to channel "qr-preview": \(https:\/\/[^[:space:]]*\)$/\1/p' publish.log)"
+          [ -n "$URL" ] || fail "could not read the preview URL from the publisher output"
+          URL="${URL%/}"
+          # Positive allowlist: ONLY a Firebase preview-channel hostname for this site and this channel
+          # (https, no path, no port, no userinfo). Anything else, including every live address, is refused.
+          allow_re='^https://sanjugupta-web--qr-preview-[a-z0-9]+\.web\.app$'
+          [[ "$URL" =~ $allow_re ]] || fail "refusing: '$URL' is not an allowed preview URL (expected https://sanjugupta-web--qr-preview-<random>.web.app)"
+          echo "Preview URL: $URL"
+          for p in / /qr /learning; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$URL$p")
+            echo "$p -> $code"
+            [ "$code" = "200" ] || fail "$URL$p returned $code"
+          done
+          curl -sI "$URL/qr/sw.js" | tr -d '\r' | grep -iq '^service-worker-allowed: /qr$' || fail "/qr/sw.js is missing Service-Worker-Allowed: /qr"
+          curl -s "$URL/qr/manifest.webmanifest" | grep -q '"scope":"/qr"' || fail "the PWA scope is not /qr"
+          {
+            echo "### Smart QR Studio preview"
+            echo "- Preview: $URL/qr"
+            echo "- Channel: qr-preview (expires after 7 days)"
+            echo "- **PUBLIC**: anyone with this link can open it, and it serves a copy of the ENTIRE current Hosting site (root, /hq, /learning, /coffee, /qr). Not a private staging environment. Do not share it; delete the channel when finished."
+            echo "- Not tested here: Google sign-in (preview host not authorised) and API calls (CORS), by design."
+          } >> "$GITHUB_STEP_SUMMARY"
