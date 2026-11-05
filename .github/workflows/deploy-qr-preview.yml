@@ -7,6 +7,8 @@ name: Smart QR Studio — PREVIEW ONLY (channel qr-preview)
 # dry_run defaults to TRUE. With dry_run=true it only prints the plan and creates nothing.
 # With dry_run=false it creates one new Hosting version (live files + the /qr app) and
 # releases it to the qr-preview preview channel only (auto-expires after 7 days).
+# The QR_HOSTING_SERVICE_ACCOUNT secret is MANDATORY here: if it is missing or empty the run fails at once with
+# a clear error. Unlike deploy-qr.yml, a missing credential can never produce a green run.
 # The publisher script and deploy-qr.yml are untouched; this file adds nothing else.
 #
 # WARNING — THE PREVIEW IS PUBLIC. A Firebase preview channel URL needs no sign-in: anyone who has the link
@@ -69,6 +71,20 @@ jobs:
               exit 1 ;;
           esac
 
+      # MANDATORY credential: fail immediately and loudly when it is missing or empty (whitespace counts as empty).
+      - name: Require the deployment credential (QR_HOSTING_SERVICE_ACCOUNT)
+        shell: bash
+        env:
+          HOSTING_SA: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          sa="${HOSTING_SA:-}"; sa="${sa//[[:space:]]/}"   # unset, empty and whitespace-only all count as missing
+          if [ -z "$sa" ]; then
+            echo "::error title=Missing deployment credential::The repository secret QR_HOSTING_SERVICE_ACCOUNT is missing or empty. This preview workflow cannot run without it and will not report success. Add a service-account key with 'Firebase Hosting Admin' on project ${HOSTING_PROJECT} as that secret, then run it again."
+            exit 1
+          fi
+          echo "Deployment credential: present."
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -104,12 +120,10 @@ jobs:
           for v in FB_API_KEY FB_AUTH_DOMAIN FB_PROJECT_ID FB_APP_ID; do
             [ -n "${!v}" ] || fail "Missing Firebase web config" "Set the repository variables FIREBASE_WEB_API_KEY, FIREBASE_WEB_AUTH_DOMAIN, FIREBASE_WEB_PROJECT_ID and FIREBASE_WEB_APP_ID (from: firebase apps:sdkconfig web)."
           done
-          # Publishing needs a credential for the project that owns the sanjugupta.com Hosting site. Without it the
-          # checks and build still run, and the publish step is skipped with a visible warning (not a failure).
-          if [ -n "$HOSTING_SA" ]; then echo "publish=true" >> "$GITHUB_OUTPUT"; else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Publishing skipped::The QR_HOSTING_SERVICE_ACCOUNT secret is not set (a service-account key with 'Firebase Hosting Admin' on project ${HOSTING_PROJECT}). The app was built and checked but NOT published to /qr."
-          fi
+          # The deployment credential is MANDATORY in this preview workflow (deploy-qr.yml skips publishing with a
+          # warning instead; this one must not). The step above already checks it; this is a second line of defence.
+          sa="${HOSTING_SA:-}"; sa="${sa//[[:space:]]/}"
+          [ -n "$sa" ] || fail "Missing QR_HOSTING_SERVICE_ACCOUNT" "The repository secret QR_HOSTING_SERVICE_ACCOUNT is missing or empty; this preview workflow will not run without it."
 
       - name: Build
         env:
@@ -138,14 +152,12 @@ jobs:
           ! grep -q "runtimeCaching" dist/sw.js || { echo "::error::The service worker must not use runtime caching."; exit 1; }
 
       - uses: google-github-actions/auth@v2
-        if: steps.config.outputs.publish == 'true'
         id: auth
         with:
           credentials_json: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
 
       # Read-only plan, always. Prints what the new version would contain; creates nothing.
       - name: Plan (read-only dry run — always)
-        if: steps.config.outputs.publish == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -154,7 +166,6 @@ jobs:
 
       # Gate: the plan must match the verified one exactly, before anything can be created.
       - name: Assert the plan (506 kept, 31 added, 0 removed, 5 QR header rules)
-        if: steps.config.outputs.publish == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -179,7 +190,7 @@ jobs:
 
       # Real preview release. Runs ONLY when dry_run=false, after the plan above passed.
       - name: Publish to the qr-preview channel (dry_run=false only)
-        if: steps.config.outputs.publish == 'true' && steps.mode.outputs.mode == 'real'
+        if: steps.mode.outputs.mode == 'real'
         shell: bash
         run: |
           set -euo pipefail
@@ -190,7 +201,7 @@ jobs:
       # The preview URL is taken from the publisher's own output line:
       #   released to channel "qr-preview": <url>
       - name: Verify the preview (preview URL only)
-        if: steps.config.outputs.publish == 'true' && steps.mode.outputs.mode == 'real'
+        if: steps.mode.outputs.mode == 'real'
         shell: bash
         run: |
           set -euo pipefail
