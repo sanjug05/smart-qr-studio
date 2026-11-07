@@ -1,0 +1,506 @@
+name: Smart QR Studio — LIVE RELEASE of /qr (manual, gated)
+
+# Releases the /qr app to the LIVE channel of the sanjugupta-web Hosting site, using the existing publisher script
+# (scripts/deploy-qr-hosting.mjs). It never runs `firebase deploy`, and it has no preview-channel or promotion step.
+#
+#   - runs only when started by hand (workflow_dispatch); never on a push; the channel is the fixed value live
+#   - dry_run defaults to TRUE and is resolved by an explicit, fail-closed shell case (true / false, nothing else)
+#   - a real release (dry_run=false) additionally requires: running from main, and typing the confirmation phrase
+#   - QR_HOSTING_SERVICE_ACCOUNT is mandatory: a missing credential fails the run, it is never a green run
+#   - GATE (reads the CURRENT live release and manifest during the run; nothing is hardcoded about live):
+#       no existing /qr files or /qr header rules; exactly 31 /qr files; the build is byte-identical to the tested
+#       preview version; the publisher's dry-run plan keeps every live file, adds 31, adds 5 header rules and
+#       leaves every other header rule alone; the live release is re-checked immediately before the release.
+#     If any check fails, nothing is created or released.
+#   - POST-RELEASE: the new live manifest and configuration are compared with the baseline read at the start
+#     (every existing file unchanged, only the 31 /qr files added, non-QR header rules identical), then the public
+#     site is checked. On failure the run prints the exact rollback (release the previous version again).
+#
+# KNOWN, SEPARATE PRODUCTION GAP (not fixed or asserted here): the /learning-specific header rules (including
+# Service-Worker-Allowed: /learning) have been missing from the live release since 818e3b on 27 October. This
+# workflow neither repairs nor checks for them; it reports before/after and states that they are unchanged. They
+# need their own remediation.
+#
+# deploy-qr.yml, scripts/deploy-qr-hosting.mjs, the app and the backend are untouched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Plan and gate only — creates and releases nothing. Untick ONLY for the real LIVE release."
+        type: boolean
+        default: true
+      confirm:
+        description: "Real release only (dry_run unticked): type RELEASE-QR-TO-LIVE to confirm. Ignored for a dry run."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# Same group as deploy-qr.yml, so the two can never publish to the live site at the same time.
+concurrency:
+  group: deploy-qr
+  cancel-in-progress: false
+
+env:
+  HOSTING_SITE: sanjugupta-web
+  HOSTING_PROJECT: ais-channel-os
+  HOSTING_CHANNEL: live
+  CONFIRM_PHRASE: RELEASE-QR-TO-LIVE
+  EXPECT_QR_FILES: "31"
+  EXPECT_QR_HEADER_RULES: "5"
+  # The QR build that was tested on the preview. The gate requires today's build to be byte-identical to it.
+  TESTED_PREVIEW_VERSION: e9c6bded91a2d537
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — live channel only, main only, and resolve the mode
+        id: mode
+        shell: bash
+        env:
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+          CONFIRM_INPUT: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$HOSTING_CHANNEL" != "live" ]; then
+            echo "::error title=Refused::The channel must be exactly 'live' (got '$HOSTING_CHANNEL')."
+            exit 1
+          fi
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error title=Refused::This workflow only runs from main (got '$GITHUB_REF'). Nothing was run."
+            exit 1
+          fi
+          case "$DRY_RUN_INPUT" in
+            true)
+              echo "mode=dry" >> "$GITHUB_OUTPUT"
+              echo "MODE: DRY RUN (dry_run=true) — the gate and the plan are checked; nothing is created or released." ;;
+            false)
+              if [ "$CONFIRM_INPUT" != "$CONFIRM_PHRASE" ]; then
+                echo "::error title=Refused::A real LIVE release needs the confirmation phrase $CONFIRM_PHRASE in the 'confirm' input. Nothing was run."
+                exit 1
+              fi
+              echo "mode=real" >> "$GITHUB_OUTPUT"
+              echo "MODE: REAL LIVE RELEASE (dry_run=false, confirmed) — the /qr app will be released to the LIVE channel if every gate passes."
+              echo "::warning title=This is a LIVE production release::If every gate passes, /qr goes live on sanjugupta.com. The /learning header gap is not touched." ;;
+            *)
+              echo "::error title=Refused::dry_run must be exactly 'true' or 'false' (got '$DRY_RUN_INPUT'). Nothing was run."
+              exit 1 ;;
+          esac
+
+      # MANDATORY credential: fail immediately and loudly when it is missing or empty (whitespace counts as empty).
+      - name: Require the deployment credential (QR_HOSTING_SERVICE_ACCOUNT)
+        shell: bash
+        env:
+          HOSTING_SA: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          sa="${HOSTING_SA:-}"; sa="${sa//[[:space:]]/}"   # unset, empty and whitespace-only all count as missing
+          if [ -z "$sa" ]; then
+            echo "::error title=Missing deployment credential::The repository secret QR_HOSTING_SERVICE_ACCOUNT is missing or empty. This live-release workflow cannot run without it and will not report success. Add a service-account key with 'Firebase Hosting Admin' on project ${HOSTING_PROJECT} as that secret, then run it again."
+            exit 1
+          fi
+          echo "Deployment credential: present."
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+      # Public build-time settings live in repository *variables* (none of them is a secret).
+      - name: Check configuration
+        id: config
+        env:
+          API_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
+          FB_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+          FB_AUTH_DOMAIN: ${{ vars.FIREBASE_WEB_AUTH_DOMAIN }}
+          FB_PROJECT_ID: ${{ vars.FIREBASE_WEB_PROJECT_ID }}
+          FB_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+          HOSTING_SA: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
+        run: |
+          fail() { echo "::error title=$1::$2"; exit 1; }
+          [ -n "$API_URL" ] || fail "Missing DYNAMIC_QR_API_BASE_URL" "Set the repository variable DYNAMIC_QR_API_BASE_URL to the Firebase Function URL (https only)."
+          case "$API_URL" in
+            https://*) ;;
+            *) fail "Invalid DYNAMIC_QR_API_BASE_URL" "Must start with https://" ;;
+          esac
+          case "$API_URL" in
+            *localhost*|*127.0.0.1*|*0.0.0.0*|*'[::1]'*|*cloudflare*|*workers.dev*) fail "Invalid DYNAMIC_QR_API_BASE_URL" "Must be the public Firebase endpoint, not localhost or a Cloudflare URL." ;;
+          esac
+          for v in FB_API_KEY FB_AUTH_DOMAIN FB_PROJECT_ID FB_APP_ID; do
+            [ -n "${!v}" ] || fail "Missing Firebase web config" "Set the repository variables FIREBASE_WEB_API_KEY, FIREBASE_WEB_AUTH_DOMAIN, FIREBASE_WEB_PROJECT_ID and FIREBASE_WEB_APP_ID (from: firebase apps:sdkconfig web)."
+          done
+          # The deployment credential is MANDATORY in this live-release workflow (deploy-qr.yml skips publishing with a
+          # warning instead; this one must not). The step above already checks it; this is a second line of defence.
+          sa="${HOSTING_SA:-}"; sa="${sa//[[:space:]]/}"
+          [ -n "$sa" ] || fail "Missing QR_HOSTING_SERVICE_ACCOUNT" "The repository secret QR_HOSTING_SERVICE_ACCOUNT is missing or empty; this live-release workflow will not run without it."
+
+      - name: Build
+        env:
+          VITE_BASE_PATH: /qr/
+          VITE_PWA_SCOPE: /qr
+          VITE_PUBLIC_BASE_URL: https://sanjugupta.com/qr/
+          # The product currently operates at Business level; keep in step with DEFAULT_PLAN in backend/src/config.ts.
+          VITE_DEFAULT_PLAN: business
+          VITE_DYNAMIC_QR_API_BASE_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
+          VITE_FIREBASE_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.FIREBASE_WEB_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_WEB_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+        run: npm run build
+
+      - name: Check the build is safe to publish
+        env:
+          API_URL: ${{ vars.DYNAMIC_QR_API_BASE_URL }}
+        run: |
+          # The real API endpoint must be in the bundle; no loopback API URL, no Cloudflare reference.
+          grep -rlF "$API_URL" dist/assets | head -1 | grep -q . || { echo "::error::The API URL is not in the built bundle."; exit 1; }
+          if grep -rhoE "https?://(127\.0\.0\.1|0\.0\.0\.0|localhost:[0-9]+)[^\"' ]*" dist/assets --include=*.js | grep -q .; then echo "::error::A loopback URL is in the bundle."; exit 1; fi
+          # (The Firebase SDK contains the plain string "Cloudflare-Workers" in its runtime detection; that is not an endpoint.)
+          if grep -rhoiE "workers\.dev|https?://[a-z0-9.-]*cloudflare[a-z0-9./-]*" dist --include=*.js --include=*.html | grep -q .; then echo "::error::A Cloudflare endpoint is in the bundle."; exit 1; fi
+          grep -q '"scope":"/qr"' dist/manifest.webmanifest || { echo "::error::PWA scope is not /qr."; exit 1; }
+          ! grep -q "runtimeCaching" dist/sw.js || { echo "::error::The service worker must not use runtime caching."; exit 1; }
+
+      - uses: google-github-actions/auth@v2
+        id: auth
+        with:
+          credentials_json: ${{ secrets.QR_HOSTING_SERVICE_ACCOUNT }}
+
+      - name: Install the read-only gate helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/qr-live-gate.mjs" <<'QR_GATE_EOF'
+          // Read-only gate and verifier for the live /qr release. Every Hosting API call is a GET; the only POST in this file is the
+          // OAuth token exchange for the service-account key. It never creates, changes or releases anything.
+          //   node qr-live-gate.mjs pre      read the live channel/manifest now, check every precondition, save a baseline
+          //   node qr-live-gate.mjs recheck  fail if the live channel is no longer the baseline version
+          //   node qr-live-gate.mjs post     compare the new live release with the baseline and check the live site
+          import { createHash, createSign } from 'node:crypto'
+          import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+          import { join, relative, resolve, sep } from 'node:path'
+          import { gzipSync } from 'node:zlib'
+
+          const API = process.env.HOSTING_API || 'https://firebasehosting.googleapis.com/v1beta1'
+          const SITE = process.env.HOSTING_SITE || 'sanjugupta-web'
+          const BASE = (process.env.SITE_BASE || 'https://sanjugupta.com').replace(/\/$/, '')
+          const DIST = resolve(process.env.DIST_DIR || 'dist')
+          const EXPECT_QR_FILES = Number(process.env.EXPECT_QR_FILES || '31')
+          const EXPECT_QR_RULES = Number(process.env.EXPECT_QR_HEADER_RULES || '5')
+          const TESTED = process.env.TESTED_PREVIEW_VERSION || ''
+          const STATE = process.env.STATE_FILE || join(process.env.RUNNER_TEMP || '.', 'qr-live-state.json')
+          const RETRIES = Number(process.env.HTTP_RETRIES || '6')
+          const RETRY_MS = Number(process.env.HTTP_RETRY_DELAY_MS || '10000')
+          const MOUNT = '/qr'
+
+          const errors = []
+          const fail = (msg) => { errors.push(msg); console.log(`::error title=Gate failed::${msg}`) }
+          const info = (msg) => console.log(msg)
+          const stable = (v) => JSON.stringify(v, (_, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x))
+          const isQrPath = (p) => p === MOUNT || p.startsWith(`${MOUNT}/`)
+          const isQrRule = (h) => typeof h.glob === 'string' && isQrPath(h.glob)
+          const summary = (md) => { if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${md}\n`) }
+          const exportEnv = (k, v) => { if (process.env.GITHUB_ENV) appendFileSync(process.env.GITHUB_ENV, `${k}=${v}\n`) }
+
+          // ------------------------------------------------------------------ auth (service-account key, token kept in memory)
+          async function token() {
+            const keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS
+            if (!keyFile || !existsSync(keyFile)) throw new Error('GOOGLE_APPLICATION_CREDENTIALS does not point to a key file')
+            const key = JSON.parse(readFileSync(keyFile, 'utf8'))
+            const aud = key.token_uri || 'https://oauth2.googleapis.com/token'
+            const now = Math.floor(Date.now() / 1000)
+            const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url')
+            const unsigned = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iss: key.client_email, scope: 'https://www.googleapis.com/auth/cloud-platform', aud, iat: now, exp: now + 3000 })}`
+            const sig = createSign('RSA-SHA256').update(unsigned).sign(key.private_key).toString('base64url')
+            const res = await fetch(aud, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${unsigned}.${sig}` }) })
+            if (!res.ok) throw new Error(`token request failed (${res.status})`)
+            const t = (await res.json()).access_token
+            if (!t) throw new Error('no access token returned')
+            console.log(`::add-mask::${t}`)
+            return t
+          }
+
+          let TOKEN = ''
+          async function get(path) {
+            const res = await fetch(`${API}/${path}`, { method: 'GET', headers: { Authorization: `Bearer ${TOKEN}` } })
+            if (!res.ok) throw new Error(`GET ${path} failed (${res.status})`)
+            return res.json()
+          }
+          async function listFiles(versionName) {
+            const files = new Map()
+            let page = ''
+            do {
+              const r = await get(`${versionName}/files?pageSize=1000${page ? `&pageToken=${encodeURIComponent(page)}` : ''}`)
+              for (const f of r.files ?? []) files.set(f.path, f.hash)
+              page = r.nextPageToken ?? ''
+            } while (page)
+            return files
+          }
+          const readLive = async () => {
+            const live = await get(`sites/${SITE}/channels/live`)
+            const v = live.release?.version
+            if (!v?.name) throw new Error('the live channel has no release')
+            return { name: v.name, id: v.name.split('/').pop(), time: live.release.releaseTime, config: v.config ?? {} }
+          }
+
+          // ------------------------------------------------- the build about to be released, hashed exactly as the publisher does
+          function localQrFiles() {
+            const out = new Map()
+            const walk = (dir) => {
+              for (const name of readdirSync(dir)) {
+                const full = join(dir, name)
+                if (statSync(full).isDirectory()) walk(full)
+                else if (!name.endsWith('.map')) {
+                  const rel = relative(DIST, full).split(sep).join('/')
+                  out.set(`${MOUNT}/${rel}`, createHash('sha256').update(gzipSync(readFileSync(full), { level: 9 })).digest('hex'))
+                }
+              }
+            }
+            if (!existsSync(DIST)) throw new Error(`build output ${DIST} does not exist`)
+            walk(DIST)
+            return out
+          }
+
+          // ------------------------------------------------------------------------------- public-site observations (read-only)
+          async function observe(path, { body = false } = {}) {
+            try {
+              const res = await fetch(`${BASE}${path}`, { redirect: 'manual', headers: { 'Cache-Control': 'no-cache' } })
+              const buf = body ? Buffer.from(await res.arrayBuffer()) : null
+              return { status: res.status, swAllowed: res.headers.get('service-worker-allowed'), sha: buf ? createHash('sha256').update(buf).digest('hex') : null, text: buf && path.endsWith('.webmanifest') ? buf.toString('utf8') : null }
+            } catch (e) {
+              return { status: 0, error: String(e.message || e) }
+            }
+          }
+          const SAMPLE_PAGES = ['/', '/learning', '/work', '/coffee']
+
+          // ------------------------------------------------------------------------------------------------------------- pre
+          async function pre() {
+            TOKEN = await token()
+            const live = await readLive()
+            const files0 = await listFiles(live.name)
+            info(`live version ${live.id} (released ${live.time}): ${files0.size} files, ${(live.config.headers ?? []).length} header rules`)
+            if (files0.size === 0) fail('the live manifest is empty')
+
+            const qrLive = [...files0.keys()].filter(isQrPath)
+            if (qrLive.length) fail(`${qrLive.length} file(s) already exist under ${MOUNT}/ in the live release (e.g. ${qrLive[0]}); expected none`)
+            const qrRules = (live.config.headers ?? []).filter(isQrRule)
+            if (qrRules.length) fail(`${qrRules.length} ${MOUNT} header rule(s) already exist in the live configuration; expected none`)
+
+            const local = localQrFiles()
+            if (local.size !== EXPECT_QR_FILES) fail(`the build contains ${local.size} files for ${MOUNT}/, expected exactly ${EXPECT_QR_FILES}`)
+
+            if (!TESTED) fail('TESTED_PREVIEW_VERSION is not set')
+            else {
+              // canonical resource name, the form the API itself returns in release.version.name: sites/{site}/versions/{version}
+              const tested = await listFiles(`sites/${SITE}/versions/${TESTED}`)
+              const testedQr = new Map([...tested].filter(([p]) => isQrPath(p)))
+              const missing = [...local].filter(([p, h]) => testedQr.get(p) !== h)
+              const extra = [...testedQr.keys()].filter((p) => !local.has(p))
+              if (missing.length || extra.length) fail(`the build is not byte-identical to the tested preview ${TESTED}: ${missing.length} file(s) differ or are missing from the preview${missing[0] ? ` (e.g. ${missing[0][0]})` : ''}, ${extra.length} preview file(s) are not in the build`)
+              else info(`tested-build check: all ${local.size} ${MOUNT} files are byte-identical (path and hash) to preview version ${TESTED}`)
+            }
+
+            const observed = {}
+            for (const p of SAMPLE_PAGES) observed[p] = await observe(p, { body: true })
+            observed['/learning/sw.js'] = await observe('/learning/sw.js')
+            const qrNow = await observe('/qr')
+            info(`public site now: / ${observed['/'].status}, /learning ${observed['/learning'].status}, /qr ${qrNow.status}; /learning/sw.js Service-Worker-Allowed: ${observed['/learning/sw.js'].swAllowed ?? '(absent)'}`)
+
+            if (errors.length) return
+            writeFileSync(STATE, JSON.stringify({ version: live.name, id: live.id, time: live.time, files: Object.fromEntries(files0), config: live.config, local: Object.fromEntries(local), observed }))
+            exportEnv('LIVE0_ID', live.id)
+            exportEnv('LIVE0_FILES', String(files0.size))
+            exportEnv('LIVE0_HEADERS', String((live.config.headers ?? []).length))
+            info(`GATE 1 OK: live ${live.id}; no existing ${MOUNT} files or rules; build has ${local.size} ${MOUNT} files, identical to the tested preview.`)
+          }
+
+          // --------------------------------------------------------------------------------------------------------- recheck
+          async function recheck() {
+            const s = JSON.parse(readFileSync(STATE, 'utf8'))
+            TOKEN = await token()
+            const live = await readLive()
+            if (live.name !== s.version) fail(`the live release changed since the gate ran (${s.id} -> ${live.id}); nothing was released`)
+            else info(`live is still ${live.id}; proceeding to release.`)
+          }
+
+          // ------------------------------------------------------------------------------------------------------------ post
+          async function post() {
+            const s = JSON.parse(readFileSync(STATE, 'utf8'))
+            TOKEN = await token()
+            const live = await readLive()
+            const files0 = new Map(Object.entries(s.files))
+            const local = new Map(Object.entries(s.local))
+            info(`live version is now ${live.id} (was ${s.id}); ${live.time}`)
+            if (live.name === s.version) fail('the live version did not change: the release did not happen')
+
+            const filesN = await listFiles(live.name)
+            const changed = [...files0].filter(([p, h]) => filesN.has(p) && filesN.get(p) !== h)
+            const removed = [...files0.keys()].filter((p) => !filesN.has(p))
+            const added = [...filesN.keys()].filter((p) => !files0.has(p))
+            if (changed.length) fail(`${changed.length} existing file(s) changed (e.g. ${changed[0][0]})`)
+            if (removed.length) fail(`${removed.length} existing file(s) were removed (e.g. ${removed[0]})`)
+            const addedNonQr = added.filter((p) => !isQrPath(p))
+            if (addedNonQr.length) fail(`${addedNonQr.length} unexpected non-${MOUNT} file(s) were added (e.g. ${addedNonQr[0]})`)
+            const badQr = [...local].filter(([p, h]) => filesN.get(p) !== h)
+            if (added.length !== EXPECT_QR_FILES || badQr.length) fail(`${added.length} file(s) added, expected exactly ${EXPECT_QR_FILES} under ${MOUNT}/ matching the build (${badQr.length} differ or are missing)`)
+            if (filesN.size !== files0.size + EXPECT_QR_FILES) fail(`the new manifest has ${filesN.size} files, expected ${files0.size + EXPECT_QR_FILES}`)
+
+            const h0 = (s.config.headers ?? []).filter((h) => !isQrRule(h))
+            const hN = live.config.headers ?? []
+            if (stable(hN.filter((h) => !isQrRule(h))) !== stable(h0)) fail('the non-QR header rules were removed, reordered or altered')
+            const qrRulesN = hN.filter(isQrRule)
+            if (qrRulesN.length !== EXPECT_QR_RULES) fail(`${qrRulesN.length} ${MOUNT} header rules in the new configuration, expected ${EXPECT_QR_RULES}`)
+            if (hN.length !== h0.length + EXPECT_QR_RULES) fail(`${hN.length} header rules in total, expected ${h0.length + EXPECT_QR_RULES}`)
+            for (const k of new Set([...Object.keys(s.config), ...Object.keys(live.config)])) {
+              if (k !== 'headers' && stable(s.config[k]) !== stable(live.config[k])) fail(`configuration key "${k}" changed`)
+            }
+
+            if (process.env.PUBLISH_LOG && existsSync(process.env.PUBLISH_LOG)) {
+              const log = readFileSync(process.env.PUBLISH_LOG, 'utf8')
+              if (!log.includes(`live version ${s.id}:`)) fail(`the publisher did not build on baseline version ${s.id}`)
+              if (!/^released to channel "live": /m.test(log)) fail('the publisher output has no "released to channel \\"live\\"" line')
+              if (!log.includes(`verified: all ${files0.size} pre-existing files unchanged`)) fail('the publisher output has no matching "verified: all N pre-existing files unchanged" line')
+            }
+
+            // public site, with retries for edge propagation
+            const check = async (label, fn) => {
+              let last = ''
+              for (let i = 0; i < RETRIES; i++) {
+                last = await fn()
+                if (last === '') { info(`ok   ${label}`); return }
+                if (i < RETRIES - 1) await new Promise((r) => setTimeout(r, RETRY_MS))
+              }
+              fail(`${label}: ${last}`)
+            }
+            for (const p of ['/', '/qr', '/learning']) await check(`${BASE}${p} returns 200`, async () => { const o = await observe(p); return o.status === 200 ? '' : `HTTP ${o.status}${o.error ? ` (${o.error})` : ''}` })
+            await check(`${BASE}/qr/sw.js has Service-Worker-Allowed: /qr`, async () => { const o = await observe('/qr/sw.js'); return o.swAllowed === MOUNT ? '' : `header is ${o.swAllowed ?? '(absent)'}` })
+            await check(`${BASE}/qr/manifest.webmanifest scope is /qr`, async () => {
+              const o = await observe('/qr/manifest.webmanifest', { body: true })
+              if (o.status !== 200) return `HTTP ${o.status}`
+              try { return JSON.parse(o.text).scope === MOUNT ? '' : `scope is ${JSON.parse(o.text).scope}` } catch { return 'manifest is not valid JSON' }
+            })
+            for (const p of SAMPLE_PAGES) {
+              const before = s.observed[p]
+              if (!before || before.status !== 200) continue
+              await check(`non-QR page ${p} is byte-identical to before the release`, async () => { const o = await observe(p, { body: true }); return o.sha === before.sha ? '' : 'content differs from the pre-release baseline' })
+            }
+
+            // /learning is reported, never asserted: the missing header rules are a known pre-existing production gap
+            const lrnBefore = s.observed['/learning/sw.js']?.swAllowed ?? '(absent)'
+            const lrnAfter = (await observe('/learning/sw.js')).swAllowed ?? '(absent)'
+            const same = lrnBefore === lrnAfter
+            info(`/learning/sw.js Service-Worker-Allowed: before ${lrnBefore}, after ${lrnAfter} -> ${same ? 'UNCHANGED' : 'CHANGED (unexpected; the non-QR header rules compared equal)'}`)
+            if (!same) console.log('::warning title=/learning header differs::The /learning/sw.js header differs from the pre-release observation although the non-QR header rules compared equal.')
+
+            const ok = errors.length === 0
+            summary(`### /qr live release: ${ok ? 'verified' : 'VERIFICATION FAILED'}`)
+            summary(`- New live version: \`${live.id}\`; previous (rollback target): \`${s.id}\``)
+            summary(`- Existing files: ${files0.size} retained unchanged; ${added.length} added, all under ${MOUNT}/; ${removed.length} removed`)
+            summary(`- Header rules: ${hN.length} (${qrRulesN.length} for ${MOUNT}); every non-QR rule is unchanged`)
+            summary(`- **/learning is unchanged and still has no \`Service-Worker-Allowed\` header** (before: ${lrnBefore}, after: ${lrnAfter}). The /learning header rules disappeared in release 818e3b on 27 October. This is a known pre-existing gap that is **not** fixed by this release and needs a separate remediation.`)
+            if (!ok) {
+              const rb = `POST ${API}/sites/${SITE}/channels/live/releases?versionName=${s.version}`
+              console.log(`::error title=ROLLBACK::To restore the previous live release, release version ${s.id} again: ${rb}`)
+              summary(`- **Rollback**: release \`${s.id}\` again: \`${rb}\``)
+            }
+          }
+
+          const mode = process.argv[2]
+          try {
+            if (mode === 'pre') await pre()
+            else if (mode === 'recheck') await recheck()
+            else if (mode === 'post') await post()
+            else throw new Error('usage: qr-live-gate.mjs pre|recheck|post')
+          } catch (e) {
+            fail(String(e.message || e))
+          }
+          if (errors.length) { console.log(`GATE FAILED (${errors.length} problem${errors.length === 1 ? '' : 's'}); see the errors above.`); process.exit(1) }
+          QR_GATE_EOF
+          node --check "$RUNNER_TEMP/qr-live-gate.mjs"
+
+      # Gate 1: reads the CURRENT live release and manifest now (GET only) and checks every precondition.
+      - name: Gate 1 — read the live release now and check the preconditions
+        shell: bash
+        env:
+          DIST_DIR: dist
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/qr-live-gate.mjs" pre
+
+      # Read-only plan from the publisher itself. Creates nothing.
+      - name: Plan (read-only dry run — always)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/deploy-qr-hosting.mjs --site "$HOSTING_SITE" --project "$HOSTING_PROJECT" --dist dist \
+            --channel "$HOSTING_CHANNEL" --message "Smart QR Studio ${GITHUB_SHA::7}" --dry-run 2>&1 | tee plan.log
+
+      # Gate 2: the publisher's plan must match the live release that Gate 1 just read.
+      - name: Gate 2 — assert the plan against the live release just read
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Plan check failed::$1"; exit 1; }
+          : "${LIVE0_ID:?Gate 1 did not record the live version}" "${LIVE0_FILES:?}" "${LIVE0_HEADERS:?}"
+          live_re='^live version ([0-9a-f]{16}): ([0-9]+) files \(([0-9]+) already under /qr/\)$'
+          new_re='^new version: ([0-9]+) existing files kept \+ ([0-9]+) files under /qr/ ; header rules ([0-9]+) \(([0-9]+) for /qr\)$'
+          [ "$(grep -cE "$live_re" plan.log || true)" = "1" ] || fail "expected exactly one 'live version' line in the plan"
+          [ "$(grep -cE "$new_re" plan.log || true)" = "1" ] || fail "expected exactly one 'new version' line in the plan"
+          [[ "$(grep -E "$live_re" plan.log)" =~ $live_re ]]
+          live_ver="${BASH_REMATCH[1]}"; live_files="${BASH_REMATCH[2]}"; live_qr="${BASH_REMATCH[3]}"
+          [[ "$(grep -E "$new_re" plan.log)" =~ $new_re ]]
+          kept="${BASH_REMATCH[1]}"; qr_files="${BASH_REMATCH[2]}"; hdr="${BASH_REMATCH[3]}"; qr_hdr="${BASH_REMATCH[4]}"
+          [ "$live_ver" = "$LIVE0_ID" ]                       || fail "the publisher planned on live version $live_ver, but Gate 1 read $LIVE0_ID"
+          [ "$live_files" = "$LIVE0_FILES" ]                  || fail "the publisher sees $live_files live files, Gate 1 read $LIVE0_FILES"
+          [ "$live_qr" = "0" ]                                || fail "$live_qr files already under /qr/ in live (expected none)"
+          [ "$kept" = "$LIVE0_FILES" ]                        || fail "files kept ($kept) differ from live files ($LIVE0_FILES): something would be removed"
+          [ "$qr_files" = "$EXPECT_QR_FILES" ]                || fail "$qr_files /qr files planned, expected exactly $EXPECT_QR_FILES"
+          [ "$qr_hdr" = "$EXPECT_QR_HEADER_RULES" ]           || fail "$qr_hdr /qr header rules planned, expected $EXPECT_QR_HEADER_RULES"
+          [ "$hdr" = "$((LIVE0_HEADERS + EXPECT_QR_HEADER_RULES))" ] || fail "$hdr header rules planned, expected $LIVE0_HEADERS existing + $EXPECT_QR_HEADER_RULES = $((LIVE0_HEADERS + EXPECT_QR_HEADER_RULES)): an existing rule would be added, removed or replaced"
+          grep -qxF "DRY RUN — nothing created. Target channel would be: live" plan.log || fail "the plan does not target the live channel"
+          echo "GATE 2 OK: live $live_ver; $kept existing files kept, $qr_files added under /qr/ (total $((kept + qr_files))); $hdr header rules = $LIVE0_HEADERS existing + $qr_hdr for /qr."
+
+      # ---- everything below runs ONLY for a confirmed real release (dry_run=false) ----
+
+      # The live release must still be the one Gate 1 read, immediately before the release.
+      - name: Re-check that live has not changed
+        if: steps.mode.outputs.mode == 'real'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/qr-live-gate.mjs" recheck
+
+      - name: Release /qr to the LIVE channel (dry_run=false and confirmed only)
+        id: release
+        if: steps.mode.outputs.mode == 'real'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MODE: REAL — releasing to channel '$HOSTING_CHANNEL' with the existing publisher script (not firebase deploy)."
+          node scripts/deploy-qr-hosting.mjs --site "$HOSTING_SITE" --project "$HOSTING_PROJECT" --dist dist \
+            --channel "$HOSTING_CHANNEL" --message "Smart QR Studio ${GITHUB_SHA::7}" 2>&1 | tee publish.log
+
+      - name: Post-release verification
+        if: steps.mode.outputs.mode == 'real'
+        shell: bash
+        env:
+          PUBLISH_LOG: ${{ github.workspace }}/publish.log
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/qr-live-gate.mjs" post
+
+      # If anything failed after the release step succeeded, say exactly how to go back.
+      - name: Rollback instructions (only if verification failed after a release)
+        if: failure() && steps.release.conclusion == 'success'
+        shell: bash
+        run: |
+          echo "::error title=Post-release verification FAILED::The release itself succeeded but verification did not. To restore the previous live release, release the previous version again (it is printed above as ROLLBACK and in the run summary). Do not re-run this workflow until the cause is understood."
