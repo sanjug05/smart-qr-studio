@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           sa="${HOSTING_SA:-}"; sa="${sa//[[:space:]]/}"   # unset, empty and whitespace-only all count as missing
           if [ -z "$sa" ]; then
-            echo "::error title=Missing deployment credential::The repository secret QR_HOSTING_SERVICE_ACCOUNT is missing or empty. This preview workflow cannot run without it and will not report success. Add a service-account key with 'Firebase Hosting Admin' on project ${HOSTING_PROJECT} as that secret, then run it again."
+            echo "::error title=Missing deployment credential::The repository secret QR_HOSTING_SERVICE_ACCOUNT is missing or empty. This live-release workflow cannot run without it and will not report success. Add a service-account key with 'Firebase Hosting Admin' on project ${HOSTING_PROJECT} as that secret, then run it again."
             exit 1
           fi
           echo "Deployment credential: present."
@@ -139,10 +139,10 @@ jobs:
           for v in FB_API_KEY FB_AUTH_DOMAIN FB_PROJECT_ID FB_APP_ID; do
             [ -n "${!v}" ] || fail "Missing Firebase web config" "Set the repository variables FIREBASE_WEB_API_KEY, FIREBASE_WEB_AUTH_DOMAIN, FIREBASE_WEB_PROJECT_ID and FIREBASE_WEB_APP_ID (from: firebase apps:sdkconfig web)."
           done
-          # The deployment credential is MANDATORY in this preview workflow (deploy-qr.yml skips publishing with a
+          # The deployment credential is MANDATORY in this live-release workflow (deploy-qr.yml skips publishing with a
           # warning instead; this one must not). The step above already checks it; this is a second line of defence.
           sa="${HOSTING_SA:-}"; sa="${sa//[[:space:]]/}"
-          [ -n "$sa" ] || fail "Missing QR_HOSTING_SERVICE_ACCOUNT" "The repository secret QR_HOSTING_SERVICE_ACCOUNT is missing or empty; this preview workflow will not run without it."
+          [ -n "$sa" ] || fail "Missing QR_HOSTING_SERVICE_ACCOUNT" "The repository secret QR_HOSTING_SERVICE_ACCOUNT is missing or empty; this live-release workflow will not run without it."
 
       - name: Build
         env:
@@ -192,7 +192,6 @@ jobs:
 
           const API = process.env.HOSTING_API || 'https://firebasehosting.googleapis.com/v1beta1'
           const SITE = process.env.HOSTING_SITE || 'sanjugupta-web'
-          const PROJECT = process.env.HOSTING_PROJECT || 'ais-channel-os'
           const BASE = (process.env.SITE_BASE || 'https://sanjugupta.com').replace(/\/$/, '')
           const DIST = resolve(process.env.DIST_DIR || 'dist')
           const EXPECT_QR_FILES = Number(process.env.EXPECT_QR_FILES || '31')
@@ -301,7 +300,8 @@ jobs:
 
             if (!TESTED) fail('TESTED_PREVIEW_VERSION is not set')
             else {
-              const tested = await listFiles(`projects/${PROJECT}/sites/${SITE}/versions/${TESTED}`)
+              // canonical resource name, the form the API itself returns in release.version.name: sites/{site}/versions/{version}
+              const tested = await listFiles(`sites/${SITE}/versions/${TESTED}`)
               const testedQr = new Map([...tested].filter(([p]) => isQrPath(p)))
               const missing = [...local].filter(([p, h]) => testedQr.get(p) !== h)
               const extra = [...testedQr.keys()].filter((p) => !local.has(p))
