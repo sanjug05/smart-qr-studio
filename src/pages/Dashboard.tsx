@@ -3,16 +3,10 @@ import { useProjects } from '@/hooks/useProjects'
 import EmptyState from '@/components/common/EmptyState'
 import ProjectCard from '@/components/common/ProjectCard'
 import InstallAppPrompt from '@/components/common/InstallAppPrompt'
-import { loadSampleAisProject } from '@/services/storage/sampleProject'
 
 export default function Dashboard() {
   const { projects, loading, remove, refresh } = useProjects()
   const navigate = useNavigate()
-
-  const handleLoadSample = async () => {
-    const project = await loadSampleAisProject()
-    navigate(`/create/${project.id}`)
-  }
 
   return (
     <div>
@@ -28,9 +22,6 @@ export default function Dashboard() {
           <Link to="/create" className="btn btn-accent">
             + Create New QR
           </Link>
-          <button className="btn btn-secondary" onClick={handleLoadSample}>
-            Try a sample (AIS)
-          </button>
         </div>
       </section>
 

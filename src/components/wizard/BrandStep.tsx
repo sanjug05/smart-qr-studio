@@ -34,7 +34,7 @@ export default function BrandStep({ brand, onChange }: { brand: BrandConfig; onC
           className="input"
           value={brand.companyName}
           maxLength={60}
-          placeholder="e.g. AIS, ABC Interiors, XYZ Motors"
+          placeholder="Your business name"
           onChange={(e) => onChange({ companyName: e.target.value })}
         />
       </div>
