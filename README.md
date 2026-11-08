@@ -5,7 +5,7 @@ Create a branded QR code that opens up to **five** destinations from a single sc
 - **Static QR** — self-contained. The QR encodes everything the customer landing page needs directly in its own URL, so it works on any device that scans it, fully offline, forever — no account, no app install, no backend involved at all.
 - **Dynamic QR** — the QR encodes only a permanent identifier. A backend resolves it to the *currently published* destinations on every scan, so destinations can be updated after the QR is printed without reprinting it. See [Dynamic QR architecture](#dynamic-qr-architecture) below.
 
-Smart QR Studio itself is not branded to any company. **AIS** is only a sample brand used to demonstrate the product — every piece of branding (name, logo, colors, destination labels) is user-configurable, for any company, and the QR Type choice is available to every project regardless of who's using it.
+Smart QR Studio itself is not branded to any company. Every piece of branding (name, logo, colors, destination labels) is user-configurable, for any company, and the QR Type choice is available to every project regardless of who's using it.
 
 > **Live limitations, stated up front:** Static QR is fully self-contained and cross-device by design (see [Self-contained shareable QR](#self-contained-shareable-qr-cross-device)) — editing a project after printing its *Static* QR does not retroactively update that already-printed code, since everything it needs is baked in at generation time. **Dynamic QR removes that specific limitation** — its whole purpose is to make destinations editable after printing — but it currently uses an anonymous per-QR management token rather than real account-based ownership; see [Current limitations](#current-limitations). The *creator's* "My QR Codes" list, and everything about wizard drafts, still lives in this browser's `localStorage` only, for both QR types.
 
@@ -243,7 +243,7 @@ A common but unreliable idea is to reshape a QR code's own data/timing modules i
 Instead, every branding style — Logo, Company Initials, Company Name, Custom — resolves to a small **image** dropped into the center of the code, exactly like a logo watermark:
 
 1. The QR is always generated at **error-correction level H** (~30% of the code can be damaged/obscured and still decode).
-2. Text styles (initials/company name) are rendered onto an offscreen canvas first, producing a bitmap — from the QR engine's point of view, "AIS" and an uploaded PNG logo are handled identically.
+2. Text styles (initials/company name) are rendered onto an offscreen canvas first, producing a bitmap — from the QR engine's point of view, a company-name bitmap and an uploaded PNG logo are handled identically.
 3. `hideBackgroundDots` + a capped `imageSize` (12–28% of the code area depending on style) keep the obscured area centered and bounded, never scattered across the code.
 4. **After generation, the QR is independently decoded** (via `jsQR`, a separate implementation from the encoder) and compared against the expected URL.
    - If it decodes correctly → shown as "✓ Verified scannable."
@@ -424,7 +424,7 @@ This is what was actually run and observed, not assumed:
 
 **QR generation & branding**
 - Verified-scannable badge confirmed for: no branding, uploaded logo, initials, full company name, and the "custom" style.
-- Company-name matrix tested end-to-end in the builder (not just at the unit level): `AIS`, `ABC`, `ABCD`, `AT&T`, `Global Industrial Solutions` (falls back to initials "GIS" with an explained message), and `日本電気株式会社` (8-character Japanese name — confirmed the width-measurement fix correctly falls back to initials "日本電", which the old character-count heuristic would have missed).
+- Company-name matrix tested end-to-end in the builder (not just at the unit level): `ABC`, `ABCD`, `AT&T`, `Global Industrial Solutions` (falls back to initials "GIS" with an explained message), and `日本電気株式会社` (8-character Japanese name — confirmed the width-measurement fix correctly falls back to initials "日本電", which the old character-count heuristic would have missed).
 - PNG export validated at the byte level (not just "the browser generated something"): intercepted the actual exported data URI, confirmed the PNG signature bytes, decoded the IHDR chunk's declared width/height, and independently decoded it as a bitmap image.
 - SVG export validated similarly: confirmed well-formed XML, correct width/height attributes, no `<script>` tags, no inline event-handler attributes, no external resource references.
 
@@ -469,10 +469,6 @@ This is what was actually run and observed, not assumed:
 - `jsx-a11y` lint rules surfaced and fixed real issues over time: form-control groups using bare `<label>` text not associated with any control were restructured as `<fieldset>`/`<legend>`; radio inputs relying on ambiguous nested markup were given explicit `aria-label`s (including the new QR Type step's two options); a modal backdrop's click-to-dismiss handler was moved off a non-interactive element onto the dialog panel itself, backed by an existing Escape-key handler and visible close button.
 
 **Not verified** (no access to physical devices in this environment): scanning a **printed** QR, or any QR — Static or Dynamic — with an **actual phone camera** has not been done. The cross-device testing above proves both architectures have no dependency on any single browser's local state, and that exported files independently decode to the correct URL via a decoder separate from the app's own — that is real, meaningful evidence, but it is not the same as a physical camera scan under real lighting, at real print size, from a real distance.
-
-## Sample brand configuration
-
-Click **"Try a sample (AIS)"** on the Dashboard to load a fully filled-out example project — company name, tagline, colors, all five destinations, and initials-based QR branding — so the whole flow can be seen end-to-end without typing anything in first. AIS is a demonstration brand only; nothing in the codebase is hard-coded to it (see `src/services/storage/sampleProject.ts`), including the Dynamic QR architecture, which is entirely data-driven regardless of QR type. Deleting the sample project, or never clicking the button at all, doesn't affect anything else — every screen works from a fresh, empty state.
 
 ## Current limitations
 
