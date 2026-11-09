@@ -16,25 +16,41 @@ No GitHub workflow holds a Google credential or can call the Hosting API.
 
 The publisher refuses any other credential: no key file, no user login, no Firebase CLI fallback.
 
-## OAuth scopes (verified against Google's discovery document)
+## OAuth scopes — a documented discrepancy, and how it is handled
 
-Google's Hosting API (`firebasehosting.googleapis.com`, v1beta1, discovery revision 20261106) declares exactly four
-scopes: `firebase`, `firebase.readonly`, `cloud-platform`, `cloud-platform.read-only`.
-`https://www.googleapis.com/auth/firebase.hosting` and `…/firebase.hosting.readonly` are **not** declared by this API,
-so a token carrying only those would be refused with an insufficient-scope error. The narrowest scopes that work are:
+Two Google sources disagree:
 
-| Use | Required scope | Allowed extras (identity only) |
+1. The **generic discovery document** for `firebasehosting.googleapis.com` (v1beta1, revision 20261106) declares only
+   `firebase`, `firebase.readonly`, `cloud-platform` and `cloud-platform.read-only`.
+2. The **method-level Firebase Hosting REST references** list `firebase.hosting` (write methods) and
+   `firebase.hosting.readonly` (read methods) as accepted alternatives, next to `firebase`, `cloud-platform` and so on.
+
+Neither source is assumed to be wrong. The evidence (as retrieved on 2026-11-09 through a page-reading tool, so a reviewer
+should re-check the pages) is saved in `scripts/test/fixtures/hosting-discovery-subset.json` under `scopeEvidence`.
+The policy prefers the **narrowest documented scopes**:
+
+| Use | Required scope (exactly) | Allowed extras (identity only) |
 |---|---|---|
-| Publisher (writes) | `https://www.googleapis.com/auth/firebase` | `userinfo.email`, `openid` |
-| Canary / read-only audit | `https://www.googleapis.com/auth/firebase.readonly` | `userinfo.email`, `openid` |
+| Publisher (writes) | `https://www.googleapis.com/auth/firebase.hosting` | `userinfo.email`, `openid` |
+| Canary / read-only audit | `https://www.googleapis.com/auth/firebase.hosting.readonly` | `userinfo.email`, `openid` |
 
-Any other scope (including `cloud-platform`, `cloud-platform.read-only`, or a write scope on the read-only token) makes the
-tools refuse. `scripts/test/fixtures/hosting-discovery-subset.json` records the discovery data and the tests assert it.
+A missing or any additional scope (`firebase`, `firebase.readonly`, `cloud-platform`, `cloud-platform.read-only`, a write
+scope on the read-only token) makes the tools **refuse**.
+
+**Proof against the real API comes first and is read-only.** The canary (read-only identity, `firebase.hosting.readonly`)
+runs real Hosting GET requests before any publishing permission is exercised. If the API rejects a Hosting-specific scope:
+the exact error is recorded, **nothing is silently broadened**, the canary stays read-only, and the documented alternatives
+(`firebase.readonly` / `cloud-platform.read-only` for reads, `firebase` / `cloud-platform` for writes) are reported for a
+decision. The publisher's `firebase.hosting` scope is exercised for the first time only in a preview.
+
+Note on routes: the code uses the project-qualified `projects/{project}/sites/{site}/…` routes of the discovery document;
+the method-level pages that could be retrieved document the `sites/{site}/…` family. The canary exercises the
+project-qualified reads first.
 
 Mint a token (operator, own gcloud configuration; the token stays in a variable and is never printed or typed into chat):
 
 ```powershell
-$body = @{ scope = @('https://www.googleapis.com/auth/firebase','https://www.googleapis.com/auth/userinfo.email'); lifetime = '900s' } | ConvertTo-Json
+$body = @{ scope = @('https://www.googleapis.com/auth/firebase.hosting','https://www.googleapis.com/auth/userinfo.email'); lifetime = '900s' } | ConvertTo-Json
 $r = Invoke-RestMethod -Method Post -Uri 'https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/qr-hosting-publisher-20261109@ais-channel-os.iam.gserviceaccount.com:generateAccessToken' `
        -Headers @{ Authorization = "Bearer $(gcloud auth print-access-token)" } -ContentType 'application/json' -Body $body
 $env:QR_PUBLISHER_TOKEN = $r.accessToken; Remove-Variable r
@@ -57,16 +73,24 @@ The publisher accepts only the **artifact zip** that GitHub recorded for a succe
 
 - repository is `sanjug05/smart-qr-studio` **and** its immutable id is `1350465108`;
 - the run is `push` on `main` (`refs/heads/main`), workflow file `.github/workflows/qr-build.yml` (workflow id `411795429`),
-  status `completed`, conclusion `success`;
-- the run's head SHA equals the manifest's 40-character source commit, the manifest's workflow SHA and run id agree, and
+  status `completed`, conclusion `success`; the manifest's `runAttempt` equals the run's actual `run_attempt`;
+- the run's head SHA equals the manifest's 40-character **source commit** (`GITHUB_SHA`), the manifest's run id agrees, and
   the commit is part of `main`;
-- the artifact `qr-release-<commit>` exists for that run, is not expired, and GitHub's **SHA-256 digest equals the digest
-  of the zip you downloaded**.
+- **trusted workflow:** the manifest's `workflowSha` (`GITHUB_WORKFLOW_SHA`, the commit of the workflow *file*) is a full
+  40-character SHA, is the source commit or one of its ancestors, and `.github/workflows/qr-build.yml` fetched from GitHub
+  **at the source commit and at the workflow revision** has the **reviewed Git blob SHA** pinned in
+  `PROVENANCE.WORKFLOW_BLOB_SHA`. The two commits are *not* required to be equal: after later application commits the
+  workflow file's revision is legitimately older. A deliberate workflow change makes builds ineligible until the pin is updated
+  in a reviewed change (a test fails until then);
+- the artifact `qr-release-<commit>` exists for that run, is not expired, GitHub's record says it came from this run id,
+  this source commit, branch `main` and repository `1350465108` (head repository too; a missing value is a refusal), and
+  GitHub's **SHA-256 digest equals the digest of the zip you downloaded**.
 
 A hash stored inside the artifact proves nothing on its own and is never trusted by itself. Pull-request builds upload no
 artifact, there is no manual trigger, and a manifest that claims a pull-request or manual event is refused. If GitHub
 cannot be reached or answers anything unexpected, the publisher **refuses** (fail closed). The zip is read in memory with
 a strict reader (no path traversal, CRC and size checked, no extra entries) and every file is checked against the manifest.
+A re-run of a workflow changes `run_attempt`; an artifact from an earlier attempt is refused (rebuild with a new push).
 
 ## 1. Get the artifact
 
@@ -114,12 +138,12 @@ The only write is re-releasing that exact earlier, finalized version.
 ## 6. Audit (read-only, dedicated identity, explicit windows only)
 
 The audit accepts **only** the dedicated read-only Hosting service account (`qr-canary-20261109@…`) with a token of scope
-`https://www.googleapis.com/auth/firebase.readonly` and 120–900 s left. A personal or Owner token, a write scope, or any
+`https://www.googleapis.com/auth/firebase.hosting.readonly` (plus identity scopes only) and 120–900 s left. A personal or Owner token, a write scope, or any
 broader scope is refused. The account stays disabled; the Owner enables it only for an explicitly authorised audit window
 and disables it afterwards.
 
 ```powershell
-$env:QR_AUDIT_TOKEN = '<900 s token, scope firebase.readonly + userinfo.email; never typed into chat>'
+$env:QR_AUDIT_TOKEN = '<900 s token, scope firebase.hosting.readonly + userinfo.email; never typed into chat>'
 node scripts/audit-qr-live.mjs --receipt "$HOME\Downloads\QR-release-records\<name>.json"
 Remove-Item Env:QR_AUDIT_TOKEN
 ```

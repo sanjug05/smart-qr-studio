@@ -7,7 +7,7 @@
  * All logic and all guards live in scripts/lib/qrPublisher.mjs (and are covered by `npm run test:publisher`).
  *
  * Credentials: ONLY a short-lived access token for the publisher service account (scope
- * https://www.googleapis.com/auth/firebase, the narrowest scope Google's Hosting API accepts for writes), in the
+ * https://www.googleapis.com/auth/firebase.hosting, the narrowest documented Hosting write scope), in the
  * environment variable QR_PUBLISHER_TOKEN of this one process. It is never accepted as an argument, never printed, and removed from the
  * environment as soon as it is read. Key files, user logins and the Firebase CLI login are NOT accepted.
  *

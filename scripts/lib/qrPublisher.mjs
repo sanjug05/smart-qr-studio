@@ -13,9 +13,11 @@
 //     including the artifact digest). A hash stored inside the artifact itself proves nothing and is never trusted alone.
 //   - IAM does NOT confine firebasehosting.sites.update to one site, channel or path. Every restriction below
 //     (project, site, channel, path, plan hash) is an APPLICATION-LEVEL control in this program, not an IAM boundary.
-//   - OAuth scopes: Google's Hosting API declares exactly four scopes (firebase, firebase.readonly, cloud-platform,
-//     cloud-platform.read-only; see scripts/test/fixtures/hosting-discovery-subset.json). The narrowest ones that work
-//     are `firebase` for writes and `firebase.readonly` for reads, and those are the only ones accepted here.
+//   - OAuth scopes: the Firebase Hosting method-level references list firebase.hosting (writes) and
+//     firebase.hosting.readonly (reads) as accepted alternatives, while the generic discovery document does not declare
+//     them (a documented discrepancy, recorded in scripts/test/fixtures/hosting-discovery-subset.json). The preferred,
+//     narrowest policy is exactly those two scopes; they are proven against the real API by the read-only canary BEFORE
+//     any publishing permission is exercised. Nothing is ever silently broadened.
 //   - Every write goes through one allow-listed function. There is no DELETE anywhere.
 //   - Guards are named functions in GUARDS so tests can prove each one is load-bearing (mutation tests).
 
@@ -49,8 +51,8 @@ export const LIMITS = Object.freeze({
 })
 
 /** Who may call, and with exactly which scopes. Anything else is refused (fail closed). */
-export const WRITE_POLICY = Object.freeze({ email: LIMITS.PUBLISHER_SA, requiredScope: `${SCOPE_BASE}firebase`, allowedScopes: Object.freeze([`${SCOPE_BASE}firebase`, ...IDENTITY_SCOPES]) })
-export const READ_POLICY = Object.freeze({ email: LIMITS.AUDIT_SA, requiredScope: `${SCOPE_BASE}firebase.readonly`, allowedScopes: Object.freeze([`${SCOPE_BASE}firebase.readonly`, ...IDENTITY_SCOPES]) })
+export const WRITE_POLICY = Object.freeze({ email: LIMITS.PUBLISHER_SA, requiredScope: `${SCOPE_BASE}firebase.hosting`, allowedScopes: Object.freeze([`${SCOPE_BASE}firebase.hosting`, ...IDENTITY_SCOPES]) })
+export const READ_POLICY = Object.freeze({ email: LIMITS.AUDIT_SA, requiredScope: `${SCOPE_BASE}firebase.hosting.readonly`, allowedScopes: Object.freeze([`${SCOPE_BASE}firebase.hosting.readonly`, ...IDENTITY_SCOPES]) })
 
 /** Immutable identity of the one build pipeline whose artifacts may be published. */
 export const PROVENANCE = Object.freeze({
@@ -58,6 +60,10 @@ export const PROVENANCE = Object.freeze({
   REPOSITORY_ID: 1350465108,
   WORKFLOW_PATH: '.github/workflows/qr-build.yml',
   WORKFLOW_ID: 411795429,
+  // REVIEWED IMMUTABLE PIN: the Git blob SHA of .github/workflows/qr-build.yml that has been reviewed and approved.
+  // A deliberate workflow change makes the build ineligible until this value is updated in a reviewed change.
+  // (scripts/test checks that this pin equals the blob SHA of the workflow file in the repository.)
+  WORKFLOW_BLOB_SHA: 'e3bfeae39e9efc93f6cf037ea244d79277903bbb',
   WORKFLOW_REF: 'sanjug05/smart-qr-studio/.github/workflows/qr-build.yml@refs/heads/main',
   REF: 'refs/heads/main',
   BRANCH: 'main',
@@ -201,9 +207,28 @@ export const GUARDS = {
     if (github.run?.status !== 'completed' || github.run?.conclusion !== 'success') throw new GuardError('PROV_RUN_NOT_SUCCESSFUL', `The GitHub Actions run is ${github.run?.status}/${github.run?.conclusion}, not completed/success.`)
   },
   provCommit({ manifest, github }) {
+    // GITHUB_SHA (the commit that triggered the run) must be what GitHub says the run built. It is NOT required to equal
+    // GITHUB_WORKFLOW_SHA: the workflow file's revision may legitimately be older than a later application commit.
     const sha = manifest.meta?.sourceCommit
-    const ok = /^[0-9a-f]{40}$/.test(String(sha)) && github.run?.head_sha === sha && manifest.meta?.workflowSha === sha && String(manifest.meta?.runId) === String(github.run?.id)
-    if (!ok) throw new GuardError('PROV_COMMIT_MISMATCH', 'The manifest\'s source commit, workflow SHA and run id do not match the GitHub run.')
+    const ok = /^[0-9a-f]{40}$/.test(String(sha)) && github.run?.head_sha === sha && String(manifest.meta?.runId) === String(github.run?.id)
+    if (!ok) throw new GuardError('PROV_COMMIT_MISMATCH', "The manifest's source commit and run id do not match the GitHub run.")
+  },
+  provRunAttempt({ manifest, github }) {
+    const a = String(manifest.meta?.runAttempt ?? '')
+    if (!/^\d+$/.test(a) || a !== String(github.run?.run_attempt)) throw new GuardError('PROV_RUN_ATTEMPT_MISMATCH', `The manifest's run attempt (${a || 'missing'}) is not the run's actual attempt (${github.run?.run_attempt}).`)
+  },
+  provWorkflowSha({ manifest }) {
+    if (!/^[0-9a-f]{40}$/.test(String(manifest.meta?.workflowSha))) throw new GuardError('PROV_WORKFLOW_SHA_INVALID', "The manifest's workflow SHA is not a full 40-character commit SHA.")
+  },
+  provWorkflowFile({ github }) {
+    // The approved workflow file must be byte-identical (same Git blob) at the source commit AND at the workflow revision.
+    for (const [label, file] of [['the source commit', github.workflowAtSource], ['the workflow revision', github.workflowAtWorkflowSha]]) {
+      if (!file || file.type !== 'file' || file.path !== PROVENANCE.WORKFLOW_PATH) throw new GuardError('PROV_WORKFLOW_FILE_MISSING', `${PROVENANCE.WORKFLOW_PATH} does not exist at ${label}.`)
+      if (file.sha !== PROVENANCE.WORKFLOW_BLOB_SHA) throw new GuardError('PROV_WORKFLOW_FILE_MODIFIED', `${PROVENANCE.WORKFLOW_PATH} at ${label} is not the reviewed workflow (blob ${String(file.sha).slice(0, 12)}, approved ${PROVENANCE.WORKFLOW_BLOB_SHA.slice(0, 12)}).`)
+    }
+  },
+  provWorkflowRevision({ github }) {
+    if (!['identical', 'ahead'].includes(github.workflowToSource?.status)) throw new GuardError('PROV_WORKFLOW_REVISION_INCONSISTENT', `The workflow revision is not the source commit or one of its ancestors (compare status "${github.workflowToSource?.status}").`)
   },
   provOnMain({ github }) {
     if (!['identical', 'ahead'].includes(github.compare?.status)) throw new GuardError('PROV_NOT_ON_MAIN', `The source commit is not part of main (compare status "${github.compare?.status}").`)
@@ -213,7 +238,9 @@ export const GUARDS = {
     const a = (github.artifacts ?? []).find((x) => x.name === name)
     if (!a || a.expired) throw new GuardError('PROV_ARTIFACT_MISSING', `GitHub has no unexpired artifact named ${name} for this run.`)
     const wr = a.workflow_run
-    if (wr && (wr.id !== github.run.id || wr.head_sha !== github.run.head_sha || wr.head_branch !== PROVENANCE.BRANCH)) throw new GuardError('PROV_ARTIFACT_MISMATCH', 'The artifact belongs to a different run, commit or branch.')
+    const id = PROVENANCE.REPOSITORY_ID
+    const ok = wr && wr.id === github.run.id && wr.head_sha === manifest.meta.sourceCommit && wr.head_branch === PROVENANCE.BRANCH && wr.repository_id === id && wr.head_repository_id === id
+    if (!ok) throw new GuardError('PROV_ARTIFACT_MISMATCH', `GitHub's record of the artifact does not say it came from this run, this source commit, branch main and repository ${id} (a missing value is a refusal).`)
   },
   provArtifactDigest({ manifest, github, zipSha256 }) {
     const name = `${PROVENANCE.ARTIFACT_PREFIX}${manifest.meta?.sourceCommit}`
@@ -420,13 +447,14 @@ export async function gatherProvenance({ manifest, githubFetch }) {
   const sha = String(manifest.meta?.sourceCommit ?? '')
   if (!/^\d+$/.test(runId) || !/^[0-9a-f]{40}$/.test(sha)) throw new GuardError('PROV_UNVERIFIABLE', 'The manifest has no valid run id and 40-character source commit; provenance cannot be verified.')
   const repo = PROVENANCE.REPOSITORY
-  const get = async (path) => {
+  const get = async (path, { missingOk = false } = {}) => {
     let res
     try {
       res = await githubFetch(`${GITHUB_API}${path}`, { method: 'GET', headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } })
     } catch {
       throw new GuardError('PROV_UNVERIFIABLE', `GitHub could not be reached for ${path}; provenance cannot be independently verified.`)
     }
+    if (missingOk && res.status === 404) return null
     if (!res.ok) throw new GuardError('PROV_UNVERIFIABLE', `GitHub answered ${res.status} for ${path}; provenance cannot be independently verified.`)
     try {
       return await res.json()
@@ -434,13 +462,19 @@ export async function gatherProvenance({ manifest, githubFetch }) {
       throw new GuardError('PROV_UNVERIFIABLE', `GitHub returned unreadable data for ${path}.`)
     }
   }
-  const [repoInfo, run, artifacts, compare] = await Promise.all([
+  const wsha = String(manifest.meta?.workflowSha ?? '')
+  const wf = /^[0-9a-f]{40}$/.test(wsha)
+  const file = (ref) => get(`/repos/${repo}/contents/${PROVENANCE.WORKFLOW_PATH}?ref=${ref}`, { missingOk: true })
+  const [repoInfo, run, artifacts, compare, workflowAtSource, workflowAtWorkflowSha, workflowToSource] = await Promise.all([
     get(`/repos/${repo}`),
     get(`/repos/${repo}/actions/runs/${runId}`),
     get(`/repos/${repo}/actions/runs/${runId}/artifacts`),
-    get(`/repos/${repo}/compare/${sha}...${PROVENANCE.BRANCH}`)
+    get(`/repos/${repo}/compare/${sha}...${PROVENANCE.BRANCH}`),
+    file(sha),
+    wf ? file(wsha) : null,
+    wf ? get(`/repos/${repo}/compare/${wsha}...${sha}`) : null
   ])
-  return { repo: repoInfo, run, artifacts: artifacts.artifacts, compare }
+  return { repo: repoInfo, run, artifacts: artifacts.artifacts, compare, workflowAtSource, workflowAtWorkflowSha, workflowToSource }
 }
 
 export async function loadArtifact(opts, deps, guards) {
@@ -466,7 +500,7 @@ export async function loadArtifact(opts, deps, guards) {
   }
   guards.manifestPresent({ manifest })
   const github = await gatherProvenance({ manifest, githubFetch: deps.githubFetch })
-  for (const g of ['provRepository', 'provRepositoryId', 'provRef', 'provEvent', 'provWorkflow', 'provRunSuccess', 'provCommit', 'provOnMain', 'provArtifactIdentity', 'provArtifactDigest']) guards[g]({ manifest, github, zipSha256 })
+  for (const g of ['provRepository', 'provRepositoryId', 'provRef', 'provEvent', 'provWorkflow', 'provRunSuccess', 'provCommit', 'provRunAttempt', 'provWorkflowSha', 'provWorkflowFile', 'provWorkflowRevision', 'provOnMain', 'provArtifactIdentity', 'provArtifactDigest']) guards[g]({ manifest, github, zipSha256 })
   const distFiles = []
   const strayEntries = []
   for (const [name, bytes] of entries) {
@@ -533,7 +567,10 @@ export function makePlan({ opts, manifest, zipSha256, liveVersion, liveConfig, l
       repositoryId: String(manifest.meta.repositoryId),
       sourceCommit: manifest.meta.sourceCommit,
       workflowRef: manifest.meta.workflowRef,
+      workflowSha: manifest.meta.workflowSha,
+      workflowBlobSha: PROVENANCE.WORKFLOW_BLOB_SHA,
       runId: String(manifest.meta.runId),
+      runAttempt: String(manifest.meta.runAttempt),
       buildId: manifest.meta.buildId ?? null
     },
     qrBlobsSha256: mapSha(new Map([...qrLocal].map(([p, f]) => [p, f.hash]))),

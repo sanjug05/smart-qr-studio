@@ -4,11 +4,12 @@
  * "after" state recorded in a release receipt written by scripts/deploy-qr-hosting.mjs (--receipt-out).
  *
  * Identity: ONLY the dedicated read-only Hosting service account (qr-canary-20261109@…) is accepted, with a token that
- * carries exactly the read-only scope https://www.googleapis.com/auth/firebase.readonly and has 120–900 s left.
+ * carries exactly the read-only scope https://www.googleapis.com/auth/firebase.hosting.readonly (plus identity scopes
+ * only) and has 120–900 s left.
  * A personal or Owner token is REFUSED. The account is kept disabled; the Owner enables it only for an explicitly
  * authorised audit window and disables it again afterwards.
  *
- *   $env:QR_AUDIT_TOKEN = '<900 s token for qr-canary-20261109, scope firebase.readonly; never typed into chat>'
+ *   $env:QR_AUDIT_TOKEN = '<900 s token for qr-canary-20261109, scope firebase.hosting.readonly + userinfo.email; never typed into chat>'
  *   node scripts/audit-qr-live.mjs --receipt "$HOME\Downloads\QR-release-records\<receipt>.json"
  *   Remove-Item Env:QR_AUDIT_TOKEN
  *

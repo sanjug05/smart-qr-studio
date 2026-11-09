@@ -3,6 +3,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -58,7 +59,7 @@ function makeArtifact() {
   art.save()
   return art
 }
-const makeGh = (art) => makeFakeGitHub({ sha: art.manifest?.meta?.sourceCommit ?? SHA, runId: RUN, zipSha256: sha256(readFileSync(art.zipPath)) })
+const makeGh = (art) => makeFakeGitHub({ sha: art.manifest?.meta?.sourceCommit ?? SHA, workflowSha: art.manifest?.meta?.workflowSha ?? SHA, runId: RUN, zipSha256: sha256(readFileSync(art.zipPath)) })
 
 /** A fresh world: fake Hosting (live = non-/qr files + an OLD /qr), a built artifact and a fake GitHub that vouches for it. */
 function world() {
@@ -84,7 +85,7 @@ async function expectRefused(promise, code) {
   await assert.rejects(promise, (e) => e instanceof GuardError && e.code === code, `expected GuardError ${code}`)
 }
 const info = (over) => ({ ...goodTokenInfo(), ...over })
-const readInfo = (over) => ({ email: LIMITS.AUDIT_SA, scope: `${S}firebase.readonly ${S}userinfo.email`, expires_in: '800', ...over })
+const readInfo = (over) => ({ email: LIMITS.AUDIT_SA, scope: `${S}firebase.hosting.readonly ${S}userinfo.email`, expires_in: '800', ...over })
 
 // ------------------------------------------------------------ guard scenarios
 // prep(w): change the world before approval; ghPrep(w): change what GitHub says; afterSave(w): tamper with the saved zip.
@@ -124,10 +125,25 @@ const scenarios = [
   { name: 'manual-run build rejected for production', guard: 'provEvent', code: 'PROV_NOT_PUSH', prep: meta((m) => { m.eventName = 'workflow_dispatch' }), mutate: 'WRITES' },
   { name: 'failed GitHub run rejected', guard: 'provRunSuccess', code: 'PROV_RUN_NOT_SUCCESSFUL', ghPrep: gh((g) => { g.run.conclusion = 'failure' }), mutate: 'WRITES' },
   { name: 'run still in progress rejected', guard: 'provRunSuccess', code: 'PROV_RUN_NOT_SUCCESSFUL', ghPrep: gh((g) => { g.run.status = 'in_progress'; g.run.conclusion = null }), mutate: 'WRITES' },
-  { name: 'wrong source commit (run built another commit)', guard: 'provCommit', code: 'PROV_COMMIT_MISMATCH', ghPrep: gh((g) => { g.run.head_sha = 'b'.repeat(40) }), mutate: 'BACKSTOP:PROV_ARTIFACT_MISMATCH' },
-  { name: 'wrong workflow SHA in the manifest', guard: 'provCommit', code: 'PROV_COMMIT_MISMATCH', prep: meta((m) => { m.workflowSha = 'c'.repeat(40) }), mutate: 'WRITES' },
-  { name: 'source commit not on main', guard: 'provOnMain', code: 'PROV_NOT_ON_MAIN', ghPrep: gh((g) => { g.compare.status = 'diverged' }), mutate: 'WRITES' },
+  { name: 'wrong source commit (run built another commit)', guard: 'provCommit', code: 'PROV_COMMIT_MISMATCH', ghPrep: gh((g) => { g.run.head_sha = 'b'.repeat(40) }), mutate: 'WRITES' },
+  { name: 'source commit not on main', guard: 'provOnMain', code: 'PROV_NOT_ON_MAIN', ghPrep: gh((g) => { g.compares.set(`${SHA}...main`, { status: 'diverged' }) }), mutate: 'WRITES' },
   { name: 'artifact expired or absent on GitHub', guard: 'provArtifactIdentity', code: 'PROV_ARTIFACT_MISSING', ghPrep: gh((g) => { g.artifacts[0].expired = true }), mutate: 'WRITES' },
+  // ---- trusted workflow (reviewed blob pin), run attempt, and complete artifact/run identity
+  { name: 'run attempt in the manifest differs from the run', guard: 'provRunAttempt', code: 'PROV_RUN_ATTEMPT_MISMATCH', ghPrep: gh((g) => { g.run.run_attempt = 2 }), mutate: 'WRITES' },
+  { name: 'run attempt missing from the manifest', guard: 'provRunAttempt', code: 'PROV_RUN_ATTEMPT_MISMATCH', prep: meta((m) => { delete m.runAttempt }), mutate: 'WRITES' },
+  { name: 'workflow SHA is not a full 40-character SHA', guard: 'provWorkflowSha', code: 'PROV_WORKFLOW_SHA_INVALID', prep: meta((m) => { m.workflowSha = 'abc123' }), mutate: 'BACKSTOP:PROV_WORKFLOW_FILE_MISSING' },
+  { name: 'workflow SHA missing from the manifest', guard: 'provWorkflowSha', code: 'PROV_WORKFLOW_SHA_INVALID', prep: meta((m) => { delete m.workflowSha }), mutate: 'BACKSTOP:PROV_WORKFLOW_FILE_MISSING' },
+  { name: 'workflow file modified at the source commit', guard: 'provWorkflowFile', code: 'PROV_WORKFLOW_FILE_MODIFIED', ghPrep: gh((g) => { g.workflowFiles.set(SHA, { type: 'file', path: PROVENANCE.WORKFLOW_PATH, sha: 'f'.repeat(40) }) }), mutate: 'WRITES' },
+  { name: 'workflow file missing at the source commit', guard: 'provWorkflowFile', code: 'PROV_WORKFLOW_FILE_MISSING', ghPrep: gh((g) => { g.workflowFiles.delete(SHA) }), mutate: 'WRITES' },
+  { name: 'workflow file is not a regular file at the source commit', guard: 'provWorkflowFile', code: 'PROV_WORKFLOW_FILE_MISSING', ghPrep: gh((g) => { g.workflowFiles.set(SHA, { type: 'dir', path: PROVENANCE.WORKFLOW_PATH, sha: PROVENANCE.WORKFLOW_BLOB_SHA }) }), mutate: 'WRITES' },
+  { name: 'workflow revision unknown to GitHub: fail closed', code: 'PROV_UNVERIFIABLE', prep: meta((m) => { m.workflowSha = 'c'.repeat(40) }), noApprove: true, mutate: 'NONE' },
+  { name: 'workflow revision is not an ancestor of the source commit', guard: 'provWorkflowRevision', code: 'PROV_WORKFLOW_REVISION_INCONSISTENT', ghPrep: gh((g) => { g.compares.set(`${SHA}...${SHA}`, { status: 'diverged' }) }), mutate: 'WRITES' },
+  { name: 'artifact has no workflow_run record (missing = refusal)', guard: 'provArtifactIdentity', code: 'PROV_ARTIFACT_MISMATCH', ghPrep: gh((g) => { delete g.artifacts[0].workflow_run }), mutate: 'WRITES' },
+  { name: 'artifact workflow_run head SHA is not the source commit', guard: 'provArtifactIdentity', code: 'PROV_ARTIFACT_MISMATCH', ghPrep: gh((g) => { g.artifacts[0].workflow_run.head_sha = 'b'.repeat(40) }), mutate: 'WRITES' },
+  { name: 'artifact workflow_run head branch is not main', guard: 'provArtifactIdentity', code: 'PROV_ARTIFACT_MISMATCH', ghPrep: gh((g) => { g.artifacts[0].workflow_run.head_branch = 'feature/x' }), mutate: 'WRITES' },
+  { name: 'artifact workflow_run repository id is wrong', guard: 'provArtifactIdentity', code: 'PROV_ARTIFACT_MISMATCH', ghPrep: gh((g) => { g.artifacts[0].workflow_run.repository_id = 5 }), mutate: 'WRITES' },
+  { name: 'artifact workflow_run head repository id is wrong (fork)', guard: 'provArtifactIdentity', code: 'PROV_ARTIFACT_MISMATCH', ghPrep: gh((g) => { g.artifacts[0].workflow_run.head_repository_id = 5 }), mutate: 'WRITES' },
+  { name: 'artifact workflow_run head repository id missing', guard: 'provArtifactIdentity', code: 'PROV_ARTIFACT_MISMATCH', ghPrep: gh((g) => { delete g.artifacts[0].workflow_run.head_repository_id }), mutate: 'WRITES' },
   { name: 'artifact belongs to another run', guard: 'provArtifactIdentity', code: 'PROV_ARTIFACT_MISMATCH', ghPrep: gh((g) => { g.artifacts[0].workflow_run.id = 1 }), mutate: 'WRITES' },
   { name: 'wrong artifact digest', guard: 'provArtifactDigest', code: 'PROV_DIGEST_MISMATCH', ghPrep: gh((g) => { g.artifacts[0].digest = `sha256:${'0'.repeat(64)}` }), mutate: 'WRITES' },
   { name: 'GitHub unreachable: fail closed', code: 'PROV_UNVERIFIABLE', ghPrep: gh((g) => { g.fail = 'network' }), mutate: 'NONE' },
@@ -152,11 +168,13 @@ const scenarios = [
   { name: 'expired token', guard: 'tokenExpiry', code: 'TOKEN_EXPIRED', tokenInfo: info({ expires_in: '0' }), mutate: 'WRITES' },
   { name: 'token that lives too long', guard: 'tokenExpiry', code: 'TOKEN_TOO_LONG_LIVED', tokenInfo: info({ expires_in: '3500' }), mutate: 'WRITES' },
   { name: 'token about to expire', guard: 'tokenExpiry', code: 'TOKEN_EXPIRING', tokenInfo: info({ expires_in: '30' }), mutate: 'WRITES' },
-  { name: 'broad cloud-platform scope rejected', guard: 'tokenScopes', code: 'TOKEN_SCOPE_TOO_BROAD', tokenInfo: info({ scope: `${S}firebase ${S}cloud-platform` }), mutate: 'WRITES' },
+  { name: 'broad cloud-platform scope rejected', guard: 'tokenScopes', code: 'TOKEN_SCOPE_TOO_BROAD', tokenInfo: info({ scope: `${S}firebase.hosting ${S}cloud-platform` }), mutate: 'WRITES' },
   { name: 'cloud-platform alone rejected (missing the exact scope)', guard: 'tokenScopes', code: 'TOKEN_SCOPE_MISSING', tokenInfo: info({ scope: `${S}cloud-platform` }), mutate: 'WRITES' },
-  { name: 'read-only scope cannot publish', guard: 'tokenScopes', code: 'TOKEN_SCOPE_MISSING', tokenInfo: info({ scope: `${S}firebase.readonly ${S}userinfo.email` }), mutate: 'WRITES' },
-  { name: 'write scope plus read-only scope rejected', guard: 'tokenScopes', code: 'TOKEN_SCOPE_TOO_BROAD', tokenInfo: info({ scope: `${S}firebase ${S}firebase.readonly` }), mutate: 'WRITES' },
-  { name: 'scope that Google\'s Hosting API does not declare (firebase.hosting) rejected', guard: 'tokenScopes', code: 'TOKEN_SCOPE_MISSING', tokenInfo: info({ scope: `${S}firebase.hosting ${S}userinfo.email` }), mutate: 'WRITES' },
+  { name: 'read-only scope cannot publish', guard: 'tokenScopes', code: 'TOKEN_SCOPE_MISSING', tokenInfo: info({ scope: `${S}firebase.hosting.readonly ${S}userinfo.email` }), mutate: 'WRITES' },
+  { name: 'write scope plus read-only scope rejected', guard: 'tokenScopes', code: 'TOKEN_SCOPE_TOO_BROAD', tokenInfo: info({ scope: `${S}firebase.hosting ${S}firebase.hosting.readonly` }), mutate: 'WRITES' },
+  { name: 'the broader documented alternative (firebase) alone is not accepted without being asked for', guard: 'tokenScopes', code: 'TOKEN_SCOPE_MISSING', tokenInfo: info({ scope: `${S}firebase ${S}userinfo.email` }), mutate: 'WRITES' },
+  { name: 'firebase.hosting plus the broader firebase scope rejected', guard: 'tokenScopes', code: 'TOKEN_SCOPE_TOO_BROAD', tokenInfo: info({ scope: `${S}firebase.hosting ${S}firebase` }), mutate: 'WRITES' },
+  { name: 'an identity scope that is not on the allow-list (userinfo.profile) is rejected', guard: 'tokenScopes', code: 'TOKEN_SCOPE_TOO_BROAD', tokenInfo: info({ scope: `${S}firebase.hosting ${S}userinfo.email openid ${S}userinfo.profile` }), mutate: 'WRITES' },
   { name: 'no token (no credential fallback)', guard: 'tokenPresent', code: 'TOKEN_REQUIRED', token: '', mutate: 'WRITES' },
   { name: 'key-file credentials in the environment', guard: 'noKeyAuth', code: 'KEY_AUTH_FORBIDDEN', env: { GOOGLE_APPLICATION_CREDENTIALS: 'C:/keys/sa.json' }, mutate: 'WRITES' }
 ]
@@ -271,24 +289,32 @@ describe('successful releases', () => {
       assert.ok(hit, `no documented Hosting method for ${call}`)
       used.add(hit.id)
       for (const q of new URLSearchParams(query).keys()) assert.ok(hit.m.queryParameters.includes(q), `${call}: "${q}" is not a documented query parameter of ${hit.id} (${hit.m.queryParameters.join(', ')})`)
-      assert.ok(hit.m.scopes.includes(WRITE_POLICY.requiredScope), `${hit.id} does not accept the publisher scope`)
+      const docKey = hit.id.replace(/^projects\.sites\.(versions|channels)/, 'sites.$1')
+      const docScopes = DISCOVERY.scopeEvidence.methodLevelReferences.methods[docKey] ?? DISCOVERY.scopeEvidence.methodLevelReferences.methods[hit.id]
+      assert.ok(docScopes, `no method-level scope evidence recorded for ${hit.id} (${docKey})`)
+      assert.ok(docScopes.includes(WRITE_POLICY.requiredScope), `${hit.id}: the method-level reference does not list the publisher scope`)
     }
     for (const id of ['projects.sites.channels.get', 'projects.sites.versions.create', 'projects.sites.versions.populateFiles', 'projects.sites.versions.patch', 'projects.sites.versions.files.list', 'projects.sites.versions.get', 'projects.sites.channels.create', 'projects.sites.channels.releases.create']) assert.ok(used.has(id), `${id} was not exercised`)
   })
 
-  test('Google declares exactly these OAuth scopes: ours are among them and the broader or invented ones are not used', () => {
-    assert.ok(DISCOVERY.declaredScopes.includes(WRITE_POLICY.requiredScope))
-    assert.ok(DISCOVERY.declaredScopes.includes(READ_POLICY.requiredScope))
-    assert.equal(WRITE_POLICY.requiredScope, `${S}firebase`)
-    assert.equal(READ_POLICY.requiredScope, `${S}firebase.readonly`)
-    for (const invented of [`${S}firebase.hosting`, `${S}firebase.hosting.readonly`]) assert.ok(!DISCOVERY.declaredScopes.includes(invented), `${invented} would be useless: the Hosting API does not declare it`)
-    for (const p of [WRITE_POLICY, READ_POLICY]) assert.ok(!p.allowedScopes.includes(`${S}cloud-platform`) && !p.allowedScopes.includes(`${S}cloud-platform.read-only`))
-    // read methods used by the audit accept the read-only scope; write methods do not
-    for (const [id, m] of Object.entries(DISCOVERY.methods)) {
-      const isRead = m.httpMethod === 'GET'
-      assert.equal(m.scopes.includes(READ_POLICY.requiredScope), isRead, `${id}: read-only scope acceptance`)
-      assert.ok(m.scopes.includes(WRITE_POLICY.requiredScope), `${id}: write scope acceptance`)
-    }
+  test('scope policy: preferred narrowest documented scopes, with the discovery/method-level discrepancy recorded (not asserted away)', () => {
+    const ev = DISCOVERY.scopeEvidence
+    assert.equal(WRITE_POLICY.requiredScope, `${S}firebase.hosting`)
+    assert.equal(READ_POLICY.requiredScope, `${S}firebase.hosting.readonly`)
+    assert.deepEqual(WRITE_POLICY.allowedScopes, [`${S}firebase.hosting`, `${S}userinfo.email`, 'openid'])
+    assert.deepEqual(READ_POLICY.allowedScopes, [`${S}firebase.hosting.readonly`, `${S}userinfo.email`, 'openid'])
+    // the discrepancy is recorded: the generic discovery document does not declare them, the method-level references do list them
+    assert.equal(ev.discoveryDocument.declaresHostingSpecificScopes, false)
+    assert.ok(!ev.discoveryDocument.declaredScopes.includes(WRITE_POLICY.requiredScope))
+    assert.match(ev.summary, /DISCREPANCY/)
+    const writeMethods = ['sites.versions.create', 'sites.versions.populateFiles', 'sites.versions.patch', 'sites.channels.create', 'sites.channels.releases.create']
+    const readMethods = ['sites.channels.get', 'sites.channels.list', 'sites.channels.releases.list', 'sites.versions.get', 'sites.versions.files.list', 'projects.sites.get']
+    for (const m of writeMethods) assert.ok(ev.methodLevelReferences.methods[m].includes(WRITE_POLICY.requiredScope), `${m}: method reference lists ${WRITE_POLICY.requiredScope}`)
+    for (const m of readMethods) assert.ok(ev.methodLevelReferences.methods[m].includes(READ_POLICY.requiredScope), `${m}: method reference lists ${READ_POLICY.requiredScope}`)
+    // read-only scope is not documented for any write method
+    for (const m of writeMethods) assert.ok(!ev.methodLevelReferences.methods[m].includes(READ_POLICY.requiredScope), `${m}: read-only scope must not be accepted for writes`)
+    // no policy ever silently includes a broader scope
+    for (const p of [WRITE_POLICY, READ_POLICY]) for (const broad of ['firebase', 'firebase.readonly', 'cloud-platform', 'cloud-platform.read-only']) assert.ok(!p.allowedScopes.includes(`${S}${broad}`))
   })
 
   test('the route builders produce the project-qualified paths of the discovery document', () => {
@@ -389,6 +415,64 @@ describe('successful releases', () => {
   })
 })
 
+describe('trusted workflow and realistic update flows', () => {
+  const NEWER = 'd'.repeat(40) // a later application commit
+  const OLDER = 'e'.repeat(40) // an earlier commit that contains the unchanged, approved workflow file
+  test('a normal future application update: source commit newer than the workflow revision, workflow file unchanged -> accepted', async () => {
+    const w = world()
+    w.art.manifest.meta.sourceCommit = NEWER
+    w.art.manifest.meta.workflowSha = OLDER
+    w.art.manifest.meta.buildId = `${RUN}-1-${NEWER.slice(0, 12)}`
+    w.art.save()
+    w.gh = makeGh(w.art)
+    w.art.onSave = (zipSha) => { w.gh.state.artifacts[0].digest = `sha256:${zipSha}` }
+    assert.notEqual(w.art.manifest.meta.sourceCommit, w.art.manifest.meta.workflowSha, 'the realistic case has different commits')
+    // GitHub: the workflow file is the approved blob at BOTH commits; the workflow revision is an ancestor of the source commit
+    assert.equal(w.gh.state.workflowFiles.get(NEWER).sha, PROVENANCE.WORKFLOW_BLOB_SHA)
+    assert.equal(w.gh.state.workflowFiles.get(OLDER).sha, PROVENANCE.WORKFLOW_BLOB_SHA)
+    assert.equal(w.gh.state.compares.get(`${OLDER}...${NEWER}`).status, 'ahead')
+    const plan = await planRun(baseOpts(w), deps(w))
+    assert.equal(plan.plan.artifact.sourceCommit, NEWER)
+    assert.equal(plan.plan.artifact.workflowSha, OLDER)
+    assert.equal(plan.plan.artifact.workflowBlobSha, PROVENANCE.WORKFLOW_BLOB_SHA)
+    assert.equal(plan.plan.artifact.runAttempt, '1')
+    const r = await publishRun(baseOpts(w, { planSha256: plan.planSha256 }), deps(w))
+    assert.ok(r.writes > 0 && w.fake.releasesTo(PV) === 1)
+  })
+  test('the same update is refused if the workflow file at the OLDER revision is not the approved one', async () => {
+    const w = world()
+    w.art.manifest.meta.sourceCommit = NEWER
+    w.art.manifest.meta.workflowSha = OLDER
+    w.art.save()
+    w.gh = makeGh(w.art)
+    w.art.onSave = (zipSha) => { w.gh.state.artifacts[0].digest = `sha256:${zipSha}` }
+    w.gh.state.workflowFiles.set(OLDER, { type: 'file', path: PROVENANCE.WORKFLOW_PATH, sha: '1'.repeat(40) })
+    await expectRefused(planRun(baseOpts(w), deps(w)), 'PROV_WORKFLOW_FILE_MODIFIED')
+    assert.equal(w.fake.writes(), 0)
+  })
+  test('the same update is refused if the workflow changed between the workflow revision and the source commit', async () => {
+    const w = world()
+    w.art.manifest.meta.sourceCommit = NEWER
+    w.art.manifest.meta.workflowSha = OLDER
+    w.art.save()
+    w.gh = makeGh(w.art)
+    w.art.onSave = (zipSha) => { w.gh.state.artifacts[0].digest = `sha256:${zipSha}` }
+    w.gh.state.workflowFiles.set(NEWER, { type: 'file', path: PROVENANCE.WORKFLOW_PATH, sha: '2'.repeat(40) })
+    await expectRefused(planRun(baseOpts(w), deps(w)), 'PROV_WORKFLOW_FILE_MODIFIED')
+  })
+  test('there is no equality requirement between the source commit and the workflow SHA', () => {
+    const src = readFileSync(fileURLToPath(new URL('../lib/qrPublisher.mjs', import.meta.url)), 'utf8')
+    assert.ok(!/workflowSha\s*===\s*(sha|manifest\.meta\??\.sourceCommit)/.test(src.replace(/\/\/.*$/gm, '')), 'workflowSha must not be compared with the source commit')
+  })
+  test('the reviewed workflow pin equals the Git blob SHA of the workflow file in this repository (a deliberate workflow change must update the pin)', () => {
+    const file = readFileSync(fileURLToPath(new URL('../../.github/workflows/qr-build.yml', import.meta.url)))
+    const lf = Buffer.from(file.toString('utf8').replace(/\r\n/g, '\n')) // git stores LF; a Windows checkout may have CRLF
+    const blob = createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${lf.length}\0`), lf])).digest('hex')
+    assert.equal(PROVENANCE.WORKFLOW_BLOB_SHA, blob, 'qr-build.yml changed: review it, then update PROVENANCE.WORKFLOW_BLOB_SHA to the new blob SHA')
+    assert.match(PROVENANCE.WORKFLOW_BLOB_SHA, /^[0-9a-f]{40}$/)
+  })
+})
+
 describe('post-write verification stops before release', () => {
   const run = async (hook) => {
     const w = world()
@@ -455,7 +539,7 @@ describe('rollback to the exact known previous live version', () => {
   })
   test('a wrong token identity, a read-only scope or a broad scope cannot roll back', async () => {
     const { w, newLive, previous } = await liveWorld()
-    for (const [ti, code] of [[info({ email: 'someone@example.com' }), 'TOKEN_WRONG_IDENTITY'], [info({ scope: `${S}firebase.readonly` }), 'TOKEN_SCOPE_MISSING'], [info({ scope: `${S}firebase ${S}cloud-platform` }), 'TOKEN_SCOPE_TOO_BROAD']]) {
+    for (const [ti, code] of [[info({ email: 'someone@example.com' }), 'TOKEN_WRONG_IDENTITY'], [info({ scope: `${S}firebase.hosting.readonly` }), 'TOKEN_SCOPE_MISSING'], [info({ scope: `${S}firebase.hosting ${S}cloud-platform` }), 'TOKEN_SCOPE_TOO_BROAD']]) {
       w.fake.state.tokenInfo = ti
       await expectRefused(rollbackRun(ro(newLive, previous), deps(w)), code)
     }
@@ -512,11 +596,12 @@ describe('read-only audit: dedicated identity, exact scope, GET only', () => {
   const refusals = [
     ['an Owner or personal token', readInfo({ email: 'sanjumanager88@gmail.com' }), 'TOKEN_WRONG_IDENTITY'],
     ['the publisher identity (a write identity)', readInfo({ email: LIMITS.PUBLISHER_SA }), 'TOKEN_WRONG_IDENTITY'],
-    ['a write scope (firebase)', readInfo({ scope: `${S}firebase ${S}userinfo.email` }), 'TOKEN_SCOPE_MISSING'],
-    ['read-only scope plus a write scope', readInfo({ scope: `${S}firebase.readonly ${S}firebase` }), 'TOKEN_SCOPE_TOO_BROAD'],
-    ['cloud-platform.read-only (broader than needed)', readInfo({ scope: `${S}firebase.readonly ${S}cloud-platform.read-only` }), 'TOKEN_SCOPE_TOO_BROAD'],
-    ['cloud-platform', readInfo({ scope: `${S}firebase.readonly ${S}cloud-platform` }), 'TOKEN_SCOPE_TOO_BROAD'],
-    ['the invented firebase.hosting.readonly scope', readInfo({ scope: `${S}firebase.hosting.readonly` }), 'TOKEN_SCOPE_MISSING'],
+    ['a write scope (firebase.hosting)', readInfo({ scope: `${S}firebase.hosting ${S}userinfo.email` }), 'TOKEN_SCOPE_MISSING'],
+    ['the broader read scope firebase.readonly alone', readInfo({ scope: `${S}firebase.readonly ${S}userinfo.email` }), 'TOKEN_SCOPE_MISSING'],
+    ['read-only scope plus a write scope', readInfo({ scope: `${S}firebase.hosting.readonly ${S}firebase.hosting` }), 'TOKEN_SCOPE_TOO_BROAD'],
+    ['cloud-platform.read-only (broader than needed)', readInfo({ scope: `${S}firebase.hosting.readonly ${S}cloud-platform.read-only` }), 'TOKEN_SCOPE_TOO_BROAD'],
+    ['cloud-platform', readInfo({ scope: `${S}firebase.hosting.readonly ${S}cloud-platform` }), 'TOKEN_SCOPE_TOO_BROAD'],
+    ['a token with no recognised Hosting scope', readInfo({ scope: `${S}userinfo.email` }), 'TOKEN_SCOPE_MISSING'],
     ['an expired token', readInfo({ expires_in: '0' }), 'TOKEN_EXPIRED'],
     ['a token that lives too long', readInfo({ expires_in: '3600' }), 'TOKEN_TOO_LONG_LIVED'],
     ['a token about to expire', readInfo({ expires_in: '10' }), 'TOKEN_EXPIRING']

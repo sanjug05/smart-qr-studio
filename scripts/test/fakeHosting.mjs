@@ -7,7 +7,7 @@ import { LIMITS, QR_HEADER_RULES, UPLOAD_PREFIX, sha256 } from '../lib/qrPublish
 const hex16 = () => randomBytes(8).toString('hex')
 const json = (status, body) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body), json: async () => body })
 
-export const goodTokenInfo = () => ({ email: LIMITS.PUBLISHER_SA, scope: 'https://www.googleapis.com/auth/firebase https://www.googleapis.com/auth/userinfo.email', expires_in: '800', email_verified: 'true' })
+export const goodTokenInfo = () => ({ email: LIMITS.PUBLISHER_SA, scope: 'https://www.googleapis.com/auth/firebase.hosting https://www.googleapis.com/auth/userinfo.email', expires_in: '800', email_verified: 'true' })
 
 export function makeFakeHosting({ liveId = '5840d3114ef43906', nonQrFiles, qrFiles = {}, nonQrHeaders, pageSize = 4, tokenInfo = goodTokenInfo() } = {}) {
   const state = {

@@ -152,5 +152,104 @@
         "pageToken"
       ]
     }
+  },
+  "scopeEvidence": {
+    "summary": "DISCREPANCY between two Google sources. (1) The generic discovery document for firebasehosting.googleapis.com (revision 20261106) declares only firebase, firebase.readonly, cloud-platform and cloud-platform.read-only. (2) The method-level Firebase Hosting REST references list firebase.hosting (writes) and firebase.hosting.readonly (reads) as accepted alternatives. Neither source is assumed to be wrong: the policy prefers the narrowest documented scopes (firebase.hosting / firebase.hosting.readonly) and the read-only canary must prove them against the real API before any publishing permission is exercised. If the API rejects one, the exact error is recorded, nothing is broadened silently, and the documented alternatives are reported for a decision.",
+    "discoveryDocument": {
+      "declaredScopes": [
+        "https://www.googleapis.com/auth/firebase",
+        "https://www.googleapis.com/auth/cloud-platform.read-only",
+        "https://www.googleapis.com/auth/firebase.readonly",
+        "https://www.googleapis.com/auth/cloud-platform"
+      ],
+      "declaresHostingSpecificScopes": false
+    },
+    "methodLevelReferences": {
+      "retrievedOn": "2026-11-09",
+      "retrievedFrom": "https://firebase.google.com/docs/reference/hosting/rest/v1beta1/<resource>/<method> (sites.* family; projects.sites.get also retrieved). Retrieved through a page-reading tool, so the lists below are a summary of the pages, to be re-checked against the pages by a reviewer. The projects.sites.versions.* / projects.sites.channels.* pages could not be retrieved; the code uses that project-qualified family, so the canary exercises it first.",
+      "methods": {
+        "sites.versions.create": [
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "sites.versions.populateFiles": [
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "sites.versions.patch": [
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "sites.channels.create": [
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "sites.channels.releases.create": [
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "sites.channels.get": [
+          "https://www.googleapis.com/auth/firebase.hosting.readonly",
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase.readonly",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform.read-only",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "sites.channels.list": [
+          "https://www.googleapis.com/auth/firebase.hosting.readonly",
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase.readonly",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform.read-only",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "sites.channels.releases.list": [
+          "https://www.googleapis.com/auth/firebase.hosting.readonly",
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase.readonly",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform.read-only",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "sites.versions.get": [
+          "https://www.googleapis.com/auth/firebase.hosting.readonly",
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase.readonly",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform.read-only",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "sites.versions.files.list": [
+          "https://www.googleapis.com/auth/firebase.hosting.readonly",
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase.readonly",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform.read-only",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "projects.sites.get": [
+          "https://www.googleapis.com/auth/firebase.hosting.readonly",
+          "https://www.googleapis.com/auth/firebase.hosting",
+          "https://www.googleapis.com/auth/firebase.readonly",
+          "https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/cloud-platform.read-only",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ]
+      }
+    },
+    "policy": {
+      "write": "https://www.googleapis.com/auth/firebase.hosting",
+      "read": "https://www.googleapis.com/auth/firebase.hosting.readonly",
+      "identityOnlyExtras": [
+        "https://www.googleapis.com/auth/userinfo.email",
+        "openid"
+      ]
+    }
   }
 }
