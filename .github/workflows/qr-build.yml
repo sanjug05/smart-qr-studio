@@ -6,14 +6,17 @@ name: QR Build (CI only)
 # Publishing is done by an operator on a local machine with scripts/deploy-qr-hosting.mjs, using the uploaded
 # artifact (dist/ + build-manifest.json). See docs/qr-publishing.md.
 #
+# Only a successful push to main uploads an artifact (named qr-release-<commit>). Pull-request builds upload nothing and
+# there is deliberately no manual trigger. The publisher independently re-verifies the run, commit and artifact digest
+# against the public GitHub API and refuses anything else.
+#
 # Only repository VARIABLES are read (public Firebase web-app configuration and the public API URL, the same values
 # that end up in the public bundle). No secrets are read.
 
 on:
-  pull_request:
+  pull_request: # CI only: runs every check but produces NO artifact
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: [main] # the only trigger that produces a production-eligible artifact
 
 permissions:
   contents: read
@@ -59,9 +62,11 @@ jobs:
         run: npm run build:manifest
       - name: Show manifest summary
         run: node -e "const m=require('./build-manifest.json');console.log(JSON.stringify({files:m.fileCount,bytes:m.totalBytes,filesSha256:m.filesSha256,meta:m.meta},null,2))"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Upload the production-eligible artifact (push to main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: qr-build-${{ github.sha }}
+          name: qr-release-${{ github.sha }}
           path: |
             dist
             build-manifest.json

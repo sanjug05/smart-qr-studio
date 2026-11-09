@@ -6,9 +6,14 @@
  * a new Hosting version from the live one. It never runs `firebase deploy` and never replaces the whole site.
  * All logic and all guards live in scripts/lib/qrPublisher.mjs (and are covered by `npm run test:publisher`).
  *
- * Credentials: ONLY a short-lived access token for the publisher service account, in the environment variable
- * QR_PUBLISHER_TOKEN of this one process. It is never accepted as an argument, never printed, and removed from the
+ * Credentials: ONLY a short-lived access token for the publisher service account (scope
+ * https://www.googleapis.com/auth/firebase, the narrowest scope Google's Hosting API accepts for writes), in the
+ * environment variable QR_PUBLISHER_TOKEN of this one process. It is never accepted as an argument, never printed, and removed from the
  * environment as soon as it is read. Key files, user logins and the Firebase CLI login are NOT accepted.
+ *
+ * Input: the artifact ZIP that the push-to-main run of qr-build.yml uploaded (--artifact-zip). Before anything is
+ * written the publisher checks its provenance against the public GitHub API (repository id, workflow, run, commit on
+ * main, artifact digest). Pull-request and manual-run artifacts are refused.
  *
  * Modes (explicit; there is no default):
  *   --mode preview   --channel qr-pv-<yyyymmdd>-<id>     new single-use preview channel
@@ -16,7 +21,7 @@
  *   --mode rollback  --target-version <id>                re-releases an exact earlier version to live
  *
  * Typical use (see docs/qr-publishing.md):
- *   1. node scripts/deploy-qr-hosting.mjs --mode preview --channel qr-pv-20261109-ab12cd --dist dist --manifest build-manifest.json \
+ *   1. node scripts/deploy-qr-hosting.mjs --mode preview --channel qr-pv-20261109-ab12cd --artifact-zip qr-release-<sha>.zip \
  *        --expected-live-version 5840d3114ef43906 --plan-only --plan-out plan.json      # read-only; prints PLAN_SHA256
  *   2. same command without --plan-only, plus --plan-sha256 <the printed hash>
  */
@@ -24,7 +29,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { GuardError, LIMITS, canonicalSha, planRun, publishRun, rollbackRun, sha256 } from './lib/qrPublisher.mjs'
 
-const VALUE_FLAGS = ['mode', 'project', 'site', 'dist', 'manifest', 'channel', 'expected-live-version', 'plan-sha256', 'plan-out', 'confirm', 'tested-version', 'target-version', 'receipt-out', 'operator']
+const VALUE_FLAGS = ['mode', 'project', 'site', 'artifact-zip', 'channel', 'expected-live-version', 'plan-sha256', 'plan-out', 'confirm', 'tested-version', 'target-version', 'receipt-out', 'operator']
 const BOOL_FLAGS = ['plan-only']
 
 function parseArgs(argv) {
@@ -51,8 +56,7 @@ async function main() {
     mode: a.mode,
     project: a.project ?? LIMITS.PROJECT,
     site: a.site ?? LIMITS.SITE,
-    dist: a.dist ?? 'dist',
-    manifest: a.manifest ?? 'build-manifest.json',
+    artifactZip: a['artifact-zip'],
     channel: a.channel ?? (a.mode === 'live' || a.mode === 'rollback' ? 'live' : undefined),
     expectedLiveVersion: a['expected-live-version'],
     planSha256: a['plan-sha256'],
@@ -60,7 +64,7 @@ async function main() {
     testedVersion: a['tested-version'],
     targetVersion: a['target-version']
   }
-  const deps = { fetchImpl: fetch, token, env }
+  const deps = { fetchImpl: fetch, githubFetch: fetch, token, env }
 
   if (a['plan-only']) {
     if (opts.mode === 'rollback') throw new Error('--plan-only does not apply to rollback.')
@@ -96,7 +100,10 @@ async function main() {
       publisherServiceAccount: r.token.email,
       sourceCommit: r.plan.artifact.sourceCommit,
       buildId: r.plan.artifact.buildId,
+      artifactZipSha256: r.plan.artifact.zipSha256,
       artifactFilesSha256: r.plan.artifact.filesSha256,
+      githubRunId: r.plan.artifact.runId,
+      workflowRef: r.plan.artifact.workflowRef,
       planSha256: r.planSha256,
       plan: r.plan,
       channel: opts.channel,

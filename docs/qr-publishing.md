@@ -7,40 +7,81 @@ No GitHub workflow holds a Google credential or can call the Hosting API.
 
 | Step | Who / where | Credential |
 |---|---|---|
-| Build, test, scan, fingerprint | `qr-build.yml` (GitHub, CI only) | none |
+| Build, test, scan, fingerprint; upload the artifact (push to `main` only) | `qr-build.yml` (GitHub, CI only) | none |
 | Enable the publisher service account | Owner (`sanjumanager88@gmail.com`) | Owner's own gcloud session |
 | Obtain a 900-second token for the publisher | Operator (`sanju.gupta90@gmail.com`), own gcloud configuration | operator's own session |
 | Plan, preview, release | Operator, `scripts/deploy-qr-hosting.mjs` on a local machine | the short-lived token only |
 | Disable the publisher service account | Owner | Owner's own gcloud session |
+| Read-only audit | Operator, `scripts/audit-qr-live.mjs`, dedicated read-only identity | its own short-lived token |
 
 The publisher refuses any other credential: no key file, no user login, no Firebase CLI fallback.
+
+## OAuth scopes (verified against Google's discovery document)
+
+Google's Hosting API (`firebasehosting.googleapis.com`, v1beta1, discovery revision 20261106) declares exactly four
+scopes: `firebase`, `firebase.readonly`, `cloud-platform`, `cloud-platform.read-only`.
+`https://www.googleapis.com/auth/firebase.hosting` and `…/firebase.hosting.readonly` are **not** declared by this API,
+so a token carrying only those would be refused with an insufficient-scope error. The narrowest scopes that work are:
+
+| Use | Required scope | Allowed extras (identity only) |
+|---|---|---|
+| Publisher (writes) | `https://www.googleapis.com/auth/firebase` | `userinfo.email`, `openid` |
+| Canary / read-only audit | `https://www.googleapis.com/auth/firebase.readonly` | `userinfo.email`, `openid` |
+
+Any other scope (including `cloud-platform`, `cloud-platform.read-only`, or a write scope on the read-only token) makes the
+tools refuse. `scripts/test/fixtures/hosting-discovery-subset.json` records the discovery data and the tests assert it.
+
+Mint a token (operator, own gcloud configuration; the token stays in a variable and is never printed or typed into chat):
+
+```powershell
+$body = @{ scope = @('https://www.googleapis.com/auth/firebase','https://www.googleapis.com/auth/userinfo.email'); lifetime = '900s' } | ConvertTo-Json
+$r = Invoke-RestMethod -Method Post -Uri 'https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/qr-hosting-publisher-20261109@ais-channel-os.iam.gserviceaccount.com:generateAccessToken' `
+       -Headers @{ Authorization = "Bearer $(gcloud auth print-access-token)" } -ContentType 'application/json' -Body $body
+$env:QR_PUBLISHER_TOKEN = $r.accessToken; Remove-Variable r
+```
 
 ## The security boundary (read this)
 
 The publisher service account needs `firebasehosting.sites.update`. **IAM cannot limit that permission to one site,
 one channel or one path.** While the account is enabled and a token exists, that token could, in principle, change
 anything on any Hosting site in the project. The restrictions in `scripts/lib/qrPublisher.mjs` (project, site, channel
-names, `/qr/` only, plan hash, typed confirmation, no DELETE) are **application-level controls inside this program,
-not an IAM boundary**. The real protections are: the account is disabled except during an approved window, tokens last
-15 minutes, no keys exist, only the operator can mint tokens, and every release is gated by a plan hash that a person
-approved.
+names, `/qr/` only, plan hash, typed confirmation, provenance, no DELETE) are **application-level controls inside this
+program, not an IAM boundary**. The real protections are: the account is disabled except during an approved window,
+tokens last 15 minutes, no keys exist, only the operator can mint tokens, and every release is gated by a plan hash
+that a person approved.
 
-## 1. Get the build
+## Build provenance (mandatory, checked independently)
 
-Use the `QR Build (CI only)` run triggered by the **push to `main`** for the commit to publish (a pull-request run builds a temporary merge commit, so its recorded source commit is not the commit that lands on `main`). Open that run, download the artifact `qr-build-<commit>` and unzip it so
-that `dist/` and `build-manifest.json` sit side by side. Do not rebuild locally for a release: the artifact is the
-approved input and the publisher re-checks every file against the manifest.
+The publisher accepts only the **artifact zip** that GitHub recorded for a successful **push to `main`** run of
+`.github/workflows/qr-build.yml`. Before anything is written it asks the public GitHub API and refuses unless:
+
+- repository is `sanjug05/smart-qr-studio` **and** its immutable id is `1350465108`;
+- the run is `push` on `main` (`refs/heads/main`), workflow file `.github/workflows/qr-build.yml` (workflow id `411795429`),
+  status `completed`, conclusion `success`;
+- the run's head SHA equals the manifest's 40-character source commit, the manifest's workflow SHA and run id agree, and
+  the commit is part of `main`;
+- the artifact `qr-release-<commit>` exists for that run, is not expired, and GitHub's **SHA-256 digest equals the digest
+  of the zip you downloaded**.
+
+A hash stored inside the artifact proves nothing on its own and is never trusted by itself. Pull-request builds upload no
+artifact, there is no manual trigger, and a manifest that claims a pull-request or manual event is refused. If GitHub
+cannot be reached or answers anything unexpected, the publisher **refuses** (fail closed). The zip is read in memory with
+a strict reader (no path traversal, CRC and size checked, no extra entries) and every file is checked against the manifest.
+
+## 1. Get the artifact
+
+Open the `QR Build (CI only)` run that was triggered by the **push to `main`** for the commit to publish and download the
+artifact `qr-release-<commit>` (a `.zip`). Do not unzip it and do not rebuild locally: the zip is the approved input.
 
 ## 2. Plan (read-only) — produces the hash a person approves
 
 ```powershell
-$env:QR_PUBLISHER_TOKEN = '<token minted for this session; never typed into chat or saved>'
-node scripts/deploy-qr-hosting.mjs --mode preview --channel qr-pv-20261109-<id> --dist dist --manifest build-manifest.json `
+node scripts/deploy-qr-hosting.mjs --mode preview --channel qr-pv-20261109-<id> --artifact-zip qr-release-<commit>.zip `
   --expected-live-version <current live version id> --plan-only --plan-out plan.json
 ```
 
-The plan lists the live version, the hashes of every non-`/qr` file and of the non-`/qr` configuration, the artifact,
-the exact `/qr` changes, and `nonQrChanges: 0`. It ends with `PLAN_SHA256=<hash>`.
+The plan lists the live version, the hashes of every non-`/qr` file and of the non-`/qr` configuration, the artifact and
+its provenance, the exact `/qr` changes, and `nonQrChanges: 0`. It ends with `PLAN_SHA256=<hash>`.
 
 ## 3. Preview (single-use channel)
 
@@ -51,10 +92,12 @@ protected. A preview URL is public and shows a copy of the **whole** site: do no
 ## 4. Live (exactly one release, after the preview was verified)
 
 ```powershell
-node scripts/deploy-qr-hosting.mjs --mode live --dist dist --manifest build-manifest.json `
+node scripts/deploy-qr-hosting.mjs --mode live --artifact-zip qr-release-<commit>.zip `
   --expected-live-version <current live id> --tested-version <the verified preview version id> `
-  --plan-only --plan-out plan-live.json            # then repeat without --plan-only, with:
-  --plan-sha256 <live plan hash> --confirm PUBLISH-CLEAN-QR-TO-LIVE --receipt-out "$HOME\Downloads\QR-release-records\<name>.json" --operator <who>
+  --plan-only --plan-out plan-live.json
+# then repeat without --plan-only and add:
+#   --plan-sha256 <live plan hash> --confirm PUBLISH-CLEAN-QR-TO-LIVE `
+#   --receipt-out "$HOME\Downloads\QR-release-records\<name>.json" --operator <who>
 ```
 
 Live mode refuses unless the new version is byte-identical (files and configuration) to the tested preview version.
@@ -68,14 +111,20 @@ node scripts/deploy-qr-hosting.mjs --mode rollback --target-version <previous ve
 
 The only write is re-releasing that exact earlier, finalized version.
 
-## 6. Audit (read-only, any time)
+## 6. Audit (read-only, dedicated identity, explicit windows only)
+
+The audit accepts **only** the dedicated read-only Hosting service account (`qr-canary-20261109@…`) with a token of scope
+`https://www.googleapis.com/auth/firebase.readonly` and 120–900 s left. A personal or Owner token, a write scope, or any
+broader scope is refused. The account stays disabled; the Owner enables it only for an explicitly authorised audit window
+and disables it afterwards.
 
 ```powershell
-$env:QR_READ_TOKEN = (gcloud auth print-access-token)
+$env:QR_AUDIT_TOKEN = '<900 s token, scope firebase.readonly + userinfo.email; never typed into chat>'
 node scripts/audit-qr-live.mjs --receipt "$HOME\Downloads\QR-release-records\<name>.json"
-Remove-Item Env:QR_READ_TOKEN
+Remove-Item Env:QR_AUDIT_TOKEN
 ```
 
-Reports every file or configuration difference between live now and the last receipt, flagging anything outside `/qr`.
+It makes GET requests only, never prints the token, and reports every file or configuration difference between live now
+and the last receipt, flagging anything outside `/qr`.
 
-Always clear the token afterwards: `Remove-Item Env:QR_PUBLISHER_TOKEN`.
+Always clear tokens afterwards: `Remove-Item Env:QR_PUBLISHER_TOKEN`.

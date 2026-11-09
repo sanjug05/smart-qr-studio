@@ -81,7 +81,7 @@ export function makeFakeHosting({ liveId = '5840d3114ef43906', nonQrFiles, qrFil
       const need = [...new Set(Object.values(files))].filter((h) => !state.blobs.has(h))
       return json(200, { uploadRequiredHashes: need, uploadUrl: `${UPLOAD_PREFIX}upload/${v.name}/files` })
     }
-    if (method === 'PATCH' && (m = path.match(/versions\/([0-9a-f]+)\?update_mask=status$/))) {
+    if (method === 'PATCH' && (m = path.match(/versions\/([0-9a-f]+)\?updateMask=status$/))) {
       const v = state.versions.get(m[1])
       v.status = 'FINALIZED'
       state.hooks.afterFinalize?.(v, state)
