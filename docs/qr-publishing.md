@@ -27,7 +27,7 @@ approved.
 
 ## 1. Get the build
 
-Open the `QR Build (CI only)` run for the commit to publish, download the artifact `qr-build-<commit>` and unzip it so
+Use the `QR Build (CI only)` run triggered by the **push to `main`** for the commit to publish (a pull-request run builds a temporary merge commit, so its recorded source commit is not the commit that lands on `main`). Open that run, download the artifact `qr-build-<commit>` and unzip it so
 that `dist/` and `build-manifest.json` sit side by side. Do not rebuild locally for a release: the artifact is the
 approved input and the publisher re-checks every file against the manifest.
 
