@@ -16,32 +16,31 @@ No GitHub workflow holds a Google credential or can call the Hosting API.
 
 The publisher refuses any other credential: no key file, no user login, no Firebase CLI fallback.
 
-## OAuth scopes — a documented discrepancy, and how it is handled
+## OAuth scopes — only two are supported
 
-Two Google sources disagree:
+The tools enforce **exactly** these scopes (plus two identity-only scopes that grant nothing) and refuse anything else:
 
-1. The **generic discovery document** for `firebasehosting.googleapis.com` (v1beta1, revision 20261106) declares only
-   `firebase`, `firebase.readonly`, `cloud-platform` and `cloud-platform.read-only`.
-2. The **method-level Firebase Hosting REST references** list `firebase.hosting` (write methods) and
-   `firebase.hosting.readonly` (read methods) as accepted alternatives, next to `firebase`, `cloud-platform` and so on.
-
-Neither source is assumed to be wrong. The evidence (as retrieved on 2026-11-09 through a page-reading tool, so a reviewer
-should re-check the pages) is saved in `scripts/test/fixtures/hosting-discovery-subset.json` under `scopeEvidence`.
-The policy prefers the **narrowest documented scopes**:
-
-| Use | Required scope (exactly) | Allowed extras (identity only) |
+| Use | The ONLY supported scope | Identity-only extras allowed |
 |---|---|---|
-| Publisher (writes) | `https://www.googleapis.com/auth/firebase.hosting` | `userinfo.email`, `openid` |
-| Canary / read-only audit | `https://www.googleapis.com/auth/firebase.hosting.readonly` | `userinfo.email`, `openid` |
+| Publisher (writes) | `https://www.googleapis.com/auth/firebase.hosting` | `openid`, `https://www.googleapis.com/auth/userinfo.email` |
+| Canary and read-only audit | `https://www.googleapis.com/auth/firebase.hosting.readonly` | `openid`, `https://www.googleapis.com/auth/userinfo.email` |
 
-A missing or any additional scope (`firebase`, `firebase.readonly`, `cloud-platform`, `cloud-platform.read-only`, a write
-scope on the read-only token) makes the tools **refuse**.
+**Unsupported — refused by the code (fail closed), never used as a fallback, never retried with:**
+`cloud-platform`, `cloud-platform.read-only`, `firebase`, `firebase.readonly`, any other scope, a write scope on the
+read-only token, and a read-only scope on the publisher. A missing required scope is also a refusal. There is no
+automatic widening of any token and no alternative-scope option in the publisher, the audit or the canary script.
+
+*Background (a documented discrepancy, recorded in `scripts/test/fixtures/hosting-discovery-subset.json`, `scopeEvidence`):*
+Google's generic discovery document for `firebasehosting.googleapis.com` (v1beta1, revision 20261106) lists only
+`firebase`, `firebase.readonly`, `cloud-platform` and `cloud-platform.read-only`, whereas the method-level Firebase
+Hosting references list `firebase.hosting` and `firebase.hosting.readonly`. Neither source is assumed wrong; this tooling
+supports only the two Hosting-specific scopes above. The listing of the other names here is a record of what Google's
+document says, **not** a list of supported options.
 
 **Proof against the real API comes first and is read-only.** The canary (read-only identity, `firebase.hosting.readonly`)
-runs real Hosting GET requests before any publishing permission is exercised. If the API rejects a Hosting-specific scope:
-the exact error is recorded, **nothing is silently broadened**, the canary stays read-only, and the documented alternatives
-(`firebase.readonly` / `cloud-platform.read-only` for reads, `firebase` / `cloud-platform` for writes) are reported for a
-decision. The publisher's `firebase.hosting` scope is exercised for the first time only in a preview.
+runs real Hosting GET requests before any publishing permission is exercised. If the API rejects a Hosting-specific scope,
+the run stops with the exact error, the canary stays read-only and **no scope is substituted**. Changing the scope policy
+would be a new, separately approved decision that also needs a code change and tests.
 
 Note on routes: the code uses the project-qualified `projects/{project}/sites/{site}/…` routes of the discovery document;
 the method-level pages that could be retrieved document the `sites/{site}/…` family. The canary exercises the
@@ -138,7 +137,7 @@ The only write is re-releasing that exact earlier, finalized version.
 ## 6. Audit (read-only, dedicated identity, explicit windows only)
 
 The audit accepts **only** the dedicated read-only Hosting service account (`qr-canary-20261109@…`) with a token of scope
-`https://www.googleapis.com/auth/firebase.hosting.readonly` (plus identity scopes only) and 120–900 s left. A personal or Owner token, a write scope, or any
+`https://www.googleapis.com/auth/firebase.hosting.readonly` (plus `openid` and `userinfo.email` only) and 120–900 s left. A personal or Owner token, a write scope, or any
 broader scope is refused. The account stays disabled; the Owner enables it only for an explicitly authorised audit window
 and disables it afterwards.
 
