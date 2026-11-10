@@ -7,7 +7,7 @@ import { LIMITS, QR_HEADER_RULES, UPLOAD_PREFIX, sha256 } from '../lib/qrPublish
 const hex16 = () => randomBytes(8).toString('hex')
 const json = (status, body) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body), json: async () => body })
 
-export const goodTokenInfo = () => ({ email: LIMITS.PUBLISHER_SA, scope: 'https://www.googleapis.com/auth/firebase https://www.googleapis.com/auth/userinfo.email', expires_in: '800', email_verified: 'true' })
+export const goodTokenInfo = () => ({ email: LIMITS.PUBLISHER_SA, scope: 'https://www.googleapis.com/auth/firebase.hosting https://www.googleapis.com/auth/userinfo.email', expires_in: '800', email_verified: 'true' })
 
 export function makeFakeHosting({ liveId = '5840d3114ef43906', nonQrFiles, qrFiles = {}, nonQrHeaders, pageSize = 4, tokenInfo = goodTokenInfo() } = {}) {
   const state = {
@@ -81,7 +81,7 @@ export function makeFakeHosting({ liveId = '5840d3114ef43906', nonQrFiles, qrFil
       const need = [...new Set(Object.values(files))].filter((h) => !state.blobs.has(h))
       return json(200, { uploadRequiredHashes: need, uploadUrl: `${UPLOAD_PREFIX}upload/${v.name}/files` })
     }
-    if (method === 'PATCH' && (m = path.match(/versions\/([0-9a-f]+)\?update_mask=status$/))) {
+    if (method === 'PATCH' && (m = path.match(/versions\/([0-9a-f]+)\?updateMask=status$/))) {
       const v = state.versions.get(m[1])
       v.status = 'FINALIZED'
       state.hooks.afterFinalize?.(v, state)

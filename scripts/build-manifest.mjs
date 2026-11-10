@@ -22,6 +22,7 @@ const meta = {
   repositoryId: env.GITHUB_REPOSITORY_ID ?? null,
   sourceCommit: sha || null,
   ref: env.GITHUB_REF ?? null,
+  eventName: env.GITHUB_EVENT_NAME ?? null,
   workflow: env.GITHUB_WORKFLOW ?? null,
   workflowRef: env.GITHUB_WORKFLOW_REF ?? null,
   workflowSha: env.GITHUB_WORKFLOW_SHA ?? null,
